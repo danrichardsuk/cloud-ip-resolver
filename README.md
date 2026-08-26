@@ -34,19 +34,22 @@ Provider adapters are responsible only for downloading and translating provider-
 
 ## Current status
 
-AWS and Azure provider slices are implemented. The project currently includes:
+All three provider adapters are now implemented. AWS and Azure have been validated against the original PowerShell scripts on the real input data; Google Cloud is ready for the same parity run.
+
+The project currently includes:
 
 - common prefix and result models
 - shared IPv4/IPv6 matcher
 - AWS `ip-ranges.json` download and parsing
 - Azure Public Service Tags discovery, download and parsing
+- Google Cloud `cloud.json` download and parsing
 - provider metadata preservation
 - CSV input validation
-- PowerShell-compatible AWS and Azure output CSVs
-- parity comparison commands for the legacy PowerShell outputs
-- unit tests for matching, provider parsing, CSV handling and comparison behaviour
+- PowerShell-compatible AWS, Azure, and Google Cloud output CSVs
+- parity comparison commands for all three legacy PowerShell outputs
+- unit tests for matching, provider parsing, CSV handling, and comparison behaviour
 
-Google Cloud, unified multi-provider workflows, the desktop GUI, and Windows packaging will be added incrementally.
+Unified multi-provider workflows, the desktop GUI, and Windows packaging will be added incrementally after provider parity is complete.
 
 ## Development
 
@@ -84,8 +87,6 @@ cloud-ip-resolver aws input.csv -o output_python.csv --ranges-file .\ip-ranges.j
 cloud-ip-resolver compare-aws .\output_v3.csv .\output_python.csv
 ```
 
-The comparison ignores row order while preserving duplicate-row multiplicity.
-
 ### Validated AWS benchmark
 
 A real-data parity run on 35,177 valid input IP rows produced exactly 1,505 match rows in both implementations:
@@ -114,18 +115,47 @@ The Azure output preserves the six columns used by the legacy PowerShell v3 scri
 IPAddress,Name,Prefix,Region,SystemService,NetworkFeatures
 ```
 
-### Use a saved Azure Service Tags snapshot
-
-For parity testing, first run the legacy non-`s` PowerShell v3 script, then point the Python resolver at the same `ServiceTags_Public.json` it downloaded:
+For parity testing, run the legacy non-`s` script first and then use the exact `ServiceTags_Public.json` it downloaded:
 
 ```powershell
 cloud-ip-resolver azure input.csv -o output_python.csv --ranges-file .\ServiceTags_Public.json
 cloud-ip-resolver compare-azure .\output_v3.csv .\output_python.csv
 ```
 
-The non-`s` PowerShell script is the correct parity target because it retains every overlapping service-tag match.
+### Validated Azure benchmark
 
-The Azure parser is IPv6-capable even though Microsoft's Public Service Tags download is currently documented as IPv4-only. This avoids repeating the legacy script's whole-byte IPv6 prefix comparison issue if IPv6 prefixes are added later.
+A real-data parity run on 34,815 input IP rows produced exactly 4,937 match rows in both implementations:
+
+```text
+Legacy PowerShell: 916.29 seconds
+Python resolver:     16.43 seconds
+Speed-up:            ~55.8x
+```
+
+## Google Cloud
+
+### Run the resolver
+
+```powershell
+cloud-ip-resolver gcp input.csv -o output_python.csv
+```
+
+When no range file is supplied, the resolver downloads Google's current public Cloud IP range feed directly from `https://www.gstatic.com/ipranges/cloud.json`.
+
+The Google Cloud output preserves the four columns used by the legacy PowerShell v3 script:
+
+```text
+IPAddress,Prefix,Service,Scope
+```
+
+For parity testing, run `pullGoogleIPInfov3.ps1` first and then use the exact `cloud.json` it downloaded:
+
+```powershell
+cloud-ip-resolver gcp input.csv -o output_python.csv --ranges-file .\cloud.json
+cloud-ip-resolver compare-gcp .\output_google_cloud.csv .\output_python.csv
+```
+
+The supplied legacy Google test input contains 34,815 IPv4 rows and no IPv6 rows, so an exact parity result is expected. The Python matcher also handles Google's non-byte-aligned IPv6 prefixes correctly; the legacy PowerShell implementation compares whole bytes and can be inaccurate for prefixes such as `/44`.
 
 ## Invalid input
 
