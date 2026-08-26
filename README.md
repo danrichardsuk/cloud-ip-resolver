@@ -102,3 +102,5 @@ MATCH: both CSVs contain the same AWS match rows (row order ignored).
 ```
 
 The Python implementation intentionally adds correct AWS IPv6 support by reading `ipv6_prefixes`. The original PowerShell v3 script only iterates the AWS IPv4 `prefixes` array, so IPv6 inputs are expected to produce additional correct rows in the Python output.
+
+<!-- ChatGPT GitHub commit identity check -->
