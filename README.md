@@ -34,14 +34,19 @@ Provider adapters are responsible only for downloading and translating provider-
 
 ## Current status
 
-Initial project foundation:
+AWS is the first complete provider slice. The project currently includes:
 
 - common prefix and result models
 - shared IPv4/IPv6 matcher
-- provider adapter interface
-- unit tests for matching behaviour
+- AWS `ip-ranges.json` download and parsing
+- both AWS IPv4 (`prefixes`) and IPv6 (`ipv6_prefixes`) ranges
+- AWS region, service, and network border group metadata
+- CSV input validation
+- PowerShell-compatible AWS match CSV output
+- a parity comparison command for legacy PowerShell output
+- unit tests for matching, AWS parsing, CSV handling, and comparison behaviour
 
-Provider downloads, CSV handling, GUI, and Windows packaging will be added incrementally.
+Azure, Google Cloud, the desktop GUI, and Windows packaging will be added incrementally.
 
 ## Development
 
@@ -55,3 +60,45 @@ pytest
 ```
 
 End users will not be expected to install Python once the Windows executable is introduced.
+
+## Run the AWS resolver
+
+The input CSV must contain an `IPAddress` column, matching the existing PowerShell input format.
+
+```powershell
+cloud-ip-resolver aws input.csv -o output_python.csv
+```
+
+This downloads the current AWS public IP range feed and writes matched rows using the same five columns as the PowerShell v3 output:
+
+```text
+IPAddress,Prefix,Region,Service,NetworkBorderGroup
+```
+
+Invalid or non-canonical IP values are reported and skipped instead of terminating the whole batch.
+
+### Use a saved AWS range snapshot
+
+For a fair comparison with the existing PowerShell script, run the PowerShell script first and then point the Python resolver at the `ip-ranges.json` it downloaded:
+
+```powershell
+cloud-ip-resolver aws input.csv -o output_python.csv --ranges-file .\ip-ranges.json
+```
+
+This ensures both implementations use exactly the same AWS publication.
+
+## Compare with the PowerShell output
+
+Run the original non-`s` PowerShell v3 script so that all overlapping AWS matches are retained. Then compare its output with the Python output:
+
+```powershell
+cloud-ip-resolver compare-aws .\output_v3.csv .\output_python.csv
+```
+
+The comparison ignores row order but preserves duplicate rows. A successful comparison prints:
+
+```text
+MATCH: both CSVs contain the same AWS match rows (row order ignored).
+```
+
+The Python implementation intentionally adds correct AWS IPv6 support by reading `ipv6_prefixes`. The original PowerShell v3 script only iterates the AWS IPv4 `prefixes` array, so IPv6 inputs are expected to produce additional correct rows in the Python output.

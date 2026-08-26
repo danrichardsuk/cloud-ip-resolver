@@ -5,4 +5,4 @@ from .models import CloudPrefix, Resolution
 from .resolver import Resolver
 
 __all__ = ["CloudPrefix", "PrefixMatcher", "Resolution", "Resolver"]
-__version__ = "0.1.0"
+__version__ = "0.2.0"
