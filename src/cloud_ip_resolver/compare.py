@@ -6,10 +6,11 @@ from collections import Counter
 import csv
 from pathlib import Path
 
-from .io import AWS_OUTPUT_FIELDS, AZURE_OUTPUT_FIELDS
+from .io import AWS_OUTPUT_FIELDS, AZURE_OUTPUT_FIELDS, GCP_OUTPUT_FIELDS
 
 AwsRow = tuple[str, str, str, str, str]
 AzureRow = tuple[str, str, str, str, str, str]
+GcpRow = tuple[str, str, str, str]
 
 
 def compare_aws_csv(
@@ -27,6 +28,15 @@ def compare_azure_csv(
 ) -> tuple[Counter[AzureRow], Counter[AzureRow]]:
     old_rows = _read_rows(old_path, AZURE_OUTPUT_FIELDS)
     new_rows = _read_rows(new_path, AZURE_OUTPUT_FIELDS)
+    return old_rows - new_rows, new_rows - old_rows
+
+
+def compare_gcp_csv(
+    old_path: str | Path,
+    new_path: str | Path,
+) -> tuple[Counter[GcpRow], Counter[GcpRow]]:
+    old_rows = _read_rows(old_path, GCP_OUTPUT_FIELDS)
+    new_rows = _read_rows(new_path, GCP_OUTPUT_FIELDS)
     return old_rows - new_rows, new_rows - old_rows
 
 

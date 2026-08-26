@@ -1,0 +1,61 @@
+import csv
+import json
+from pathlib import Path
+
+import pytest
+
+from cloud_ip_resolver.io import GCP_OUTPUT_FIELDS, write_gcp_matches_csv
+from cloud_ip_resolver.providers.gcp import GcpProvider, parse_gcp_feed
+from cloud_ip_resolver.resolver import Resolver
+
+FIXTURE = Path(__file__).parent / "fixtures" / "gcp_cloud.json"
+
+
+def test_parse_gcp_feed_preserves_metadata() -> None:
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    feed = parse_gcp_feed(payload)
+    assert feed.sync_token == "1234567890"
+    assert feed.creation_time == "2026-08-26T01:06:36.277297"
+    assert feed.ipv4_count == 2
+    assert feed.ipv6_count == 1
+    prefix = next(item for item in feed.prefixes if item.scope == "asia-east1")
+    assert prefix.service == "Google Cloud"
+    assert prefix.metadata["published_prefix"] == "34.80.0.0/15"
+
+
+def test_gcp_overlapping_ipv4_returns_all_matches() -> None:
+    feed = GcpProvider(ranges_file=FIXTURE).load_feed()
+    matches = Resolver(feed.prefixes).resolve_one("34.80.10.20").matches
+    assert [match.scope for match in matches] == ["asia-east1-special", "asia-east1"]
+
+
+def test_gcp_non_byte_aligned_ipv6_is_correct() -> None:
+    feed = GcpProvider(ranges_file=FIXTURE).load_feed()
+    resolver = Resolver(feed.prefixes)
+    assert resolver.resolve_one("2600:1900:1000::1").matched
+    assert not resolver.resolve_one("2600:1900:2000::1").matched
+
+
+def test_gcp_writer_uses_legacy_columns(tmp_path: Path) -> None:
+    feed = GcpProvider(ranges_file=FIXTURE).load_feed()
+    resolutions = Resolver(feed.prefixes).resolve_many(["34.80.10.20"])
+    output = tmp_path / "output.csv"
+    rows_written = write_gcp_matches_csv(output, resolutions)
+    with output.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows_written == 2
+    assert tuple(rows[0].keys()) == GCP_OUTPUT_FIELDS
+    assert {row["Scope"] for row in rows} == {"asia-east1", "asia-east1-special"}
+    assert {row["Service"] for row in rows} == {"Google Cloud"}
+
+
+def test_invalid_prefix_collection_rejected() -> None:
+    with pytest.raises(ValueError, match="prefixes collection"):
+        parse_gcp_feed({"prefixes": {}})
+
+
+def test_record_requires_exactly_one_address_family() -> None:
+    with pytest.raises(ValueError, match="exactly one"):
+        parse_gcp_feed({"prefixes": [{"service": "Google Cloud", "scope": "global"}]})
+    with pytest.raises(ValueError, match="exactly one"):
+        parse_gcp_feed({"prefixes": [{"ipv4Prefix": "1.1.1.0/24", "ipv6Prefix": "2001:db8::/32"}]})

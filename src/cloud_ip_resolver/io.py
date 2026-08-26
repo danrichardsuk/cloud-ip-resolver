@@ -25,6 +25,12 @@ AZURE_OUTPUT_FIELDS = (
     "SystemService",
     "NetworkFeatures",
 )
+GCP_OUTPUT_FIELDS = (
+    "IPAddress",
+    "Prefix",
+    "Service",
+    "Scope",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +116,26 @@ def write_azure_matches_csv(
             "Region": match.region or "",
             "SystemService": match.service or "",
             "NetworkFeatures": match.metadata.get("network_features") or "",
+        },
+    )
+
+
+def write_gcp_matches_csv(
+    path: str | Path,
+    resolutions: Iterable[Resolution],
+) -> int:
+    """Write GCP matches using the legacy PowerShell v3 columns."""
+
+    return _write_matches_csv(
+        path,
+        GCP_OUTPUT_FIELDS,
+        resolutions,
+        provider="GCP",
+        row_factory=lambda resolution, match: {
+            "IPAddress": str(resolution.ip),
+            "Prefix": match.metadata.get("published_prefix") or str(match.network),
+            "Service": match.service or "",
+            "Scope": match.scope or "",
         },
     )
 
