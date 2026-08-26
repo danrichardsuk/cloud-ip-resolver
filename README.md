@@ -34,19 +34,19 @@ Provider adapters are responsible only for downloading and translating provider-
 
 ## Current status
 
-AWS is the first complete provider slice. The project currently includes:
+AWS and Azure provider slices are implemented. The project currently includes:
 
 - common prefix and result models
 - shared IPv4/IPv6 matcher
 - AWS `ip-ranges.json` download and parsing
-- both AWS IPv4 (`prefixes`) and IPv6 (`ipv6_prefixes`) ranges
-- AWS region, service, and network border group metadata
+- Azure Public Service Tags discovery, download and parsing
+- provider metadata preservation
 - CSV input validation
-- PowerShell-compatible AWS match CSV output
-- a parity comparison command for legacy PowerShell output
-- unit tests for matching, AWS parsing, CSV handling, and comparison behaviour
+- PowerShell-compatible AWS and Azure output CSVs
+- parity comparison commands for the legacy PowerShell outputs
+- unit tests for matching, provider parsing, CSV handling and comparison behaviour
 
-Azure, Google Cloud, the desktop GUI, and Windows packaging will be added incrementally.
+Google Cloud, unified multi-provider workflows, the desktop GUI, and Windows packaging will be added incrementally.
 
 ## Development
 
@@ -61,7 +61,9 @@ pytest
 
 End users will not be expected to install Python once the Windows executable is introduced.
 
-## Run the AWS resolver
+## AWS
+
+### Run the resolver
 
 The input CSV must contain an `IPAddress` column, matching the existing PowerShell input format.
 
@@ -69,38 +71,62 @@ The input CSV must contain an `IPAddress` column, matching the existing PowerShe
 cloud-ip-resolver aws input.csv -o output_python.csv
 ```
 
-This downloads the current AWS public IP range feed and writes matched rows using the same five columns as the PowerShell v3 output:
+The AWS output uses the same five columns as the PowerShell v3 output:
 
 ```text
 IPAddress,Prefix,Region,Service,NetworkBorderGroup
 ```
 
-Invalid or non-canonical IP values are reported and skipped instead of terminating the whole batch.
-
-### Use a saved AWS range snapshot
-
-For a fair comparison with the existing PowerShell script, run the PowerShell script first and then point the Python resolver at the `ip-ranges.json` it downloaded:
+For a fair comparison with the legacy script, use the exact `ip-ranges.json` it downloaded:
 
 ```powershell
 cloud-ip-resolver aws input.csv -o output_python.csv --ranges-file .\ip-ranges.json
-```
-
-This ensures both implementations use exactly the same AWS publication.
-
-## Compare with the PowerShell output
-
-Run the original non-`s` PowerShell v3 script so that all overlapping AWS matches are retained. Then compare its output with the Python output:
-
-```powershell
 cloud-ip-resolver compare-aws .\output_v3.csv .\output_python.csv
 ```
 
-The comparison ignores row order but preserves duplicate rows. A successful comparison prints:
+The comparison ignores row order while preserving duplicate-row multiplicity.
+
+### Validated AWS benchmark
+
+A real-data parity run on 35,177 valid input IP rows produced exactly 1,505 match rows in both implementations:
 
 ```text
-MATCH: both CSVs contain the same AWS match rows (row order ignored).
+Legacy PowerShell: 577.55 seconds
+Python resolver:      1.85 seconds
+Speed-up:           ~312x
 ```
 
-The Python implementation intentionally adds correct AWS IPv6 support by reading `ipv6_prefixes`. The original PowerShell v3 script only iterates the AWS IPv4 `prefixes` array, so IPv6 inputs are expected to produce additional correct rows in the Python output.
+The Python implementation also correctly reads AWS `ipv6_prefixes`; the legacy PowerShell v3 script only iterates the IPv4 `prefixes` array.
 
-<!-- ChatGPT GitHub commit identity check -->
+## Azure
+
+### Run the resolver
+
+```powershell
+cloud-ip-resolver azure input.csv -o output_python.csv
+```
+
+When no range file is supplied, the resolver discovers the current JSON link from Microsoft's Azure IP Ranges and Service Tags – Public Cloud download page and downloads it automatically.
+
+The Azure output preserves the six columns used by the legacy PowerShell v3 script:
+
+```text
+IPAddress,Name,Prefix,Region,SystemService,NetworkFeatures
+```
+
+### Use a saved Azure Service Tags snapshot
+
+For parity testing, first run the legacy non-`s` PowerShell v3 script, then point the Python resolver at the same `ServiceTags_Public.json` it downloaded:
+
+```powershell
+cloud-ip-resolver azure input.csv -o output_python.csv --ranges-file .\ServiceTags_Public.json
+cloud-ip-resolver compare-azure .\output_v3.csv .\output_python.csv
+```
+
+The non-`s` PowerShell script is the correct parity target because it retains every overlapping service-tag match.
+
+The Azure parser is IPv6-capable even though Microsoft's Public Service Tags download is currently documented as IPv4-only. This avoids repeating the legacy script's whole-byte IPv6 prefix comparison issue if IPv6 prefixes are added later.
+
+## Invalid input
+
+Invalid or non-canonical IP values are reported and skipped instead of terminating the whole batch. Valid rows retain their original input order and duplicates.

@@ -7,9 +7,10 @@ from pathlib import Path
 import sys
 import time
 
-from .compare import compare_aws_csv
-from .io import read_ip_csv, write_aws_matches_csv
+from .compare import compare_aws_csv, compare_azure_csv
+from .io import read_ip_csv, write_aws_matches_csv, write_azure_matches_csv
 from .providers.aws import AwsProvider
+from .providers.azure import AzureProvider
 from .resolver import Resolver
 
 
@@ -21,39 +22,41 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     aws = subparsers.add_parser("aws", help="Resolve a CSV against AWS public ranges")
-    aws.add_argument("input", type=Path, help="Input CSV containing an IPAddress column")
-    aws.add_argument(
-        "-o",
-        "--output",
-        type=Path,
-        default=Path("output_aws.csv"),
-        help="Output CSV path (default: output_aws.csv)",
+    _add_resolve_arguments(aws, default_output="output_aws.csv")
+
+    azure = subparsers.add_parser(
+        "azure", help="Resolve a CSV against Azure Public Service Tags"
     )
-    aws.add_argument(
+    _add_resolve_arguments(azure, default_output="output_azure.csv")
+
+    compare_aws = subparsers.add_parser(
+        "compare-aws", help="Compare legacy and Python AWS output CSVs ignoring row order"
+    )
+    _add_compare_arguments(compare_aws)
+
+    compare_azure = subparsers.add_parser(
+        "compare-azure",
+        help="Compare legacy and Python Azure output CSVs ignoring row order",
+    )
+    _add_compare_arguments(compare_azure)
+    return parser
+
+
+def _add_resolve_arguments(parser: argparse.ArgumentParser, *, default_output: str) -> None:
+    parser.add_argument("input", type=Path, help="Input CSV containing an IPAddress column")
+    parser.add_argument("-o", "--output", type=Path, default=Path(default_output))
+    parser.add_argument(
         "--ranges-file",
         type=Path,
-        help="Use a saved AWS ip-ranges.json instead of downloading the current feed",
+        help="Use a saved provider JSON file instead of downloading the current feed",
     )
-    aws.add_argument(
-        "--ip-column",
-        default="IPAddress",
-        help="Input CSV column containing addresses (default: IPAddress)",
-    )
+    parser.add_argument("--ip-column", default="IPAddress")
 
-    compare = subparsers.add_parser(
-        "compare-aws",
-        help="Compare legacy and Python AWS output CSVs ignoring row order",
-    )
-    compare.add_argument("old", type=Path, help="Legacy PowerShell output CSV")
-    compare.add_argument("new", type=Path, help="Python output CSV")
-    compare.add_argument(
-        "--show",
-        type=int,
-        default=10,
-        help="Maximum differing rows to display from each side (default: 10)",
-    )
 
-    return parser
+def _add_compare_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("old", type=Path, help="Legacy PowerShell output CSV")
+    parser.add_argument("new", type=Path, help="Python output CSV")
+    parser.add_argument("--show", type=int, default=10)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -61,18 +64,19 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "aws":
             return _run_aws(args)
+        if args.command == "azure":
+            return _run_azure(args)
         if args.command == "compare-aws":
-            return _run_compare_aws(args)
+            return _run_compare(args, compare_aws_csv, label="AWS")
+        if args.command == "compare-azure":
+            return _run_compare(args, compare_azure_csv, label="Azure")
     except (OSError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
-
     return 2
 
 
-def _run_aws(args: argparse.Namespace) -> int:
-    started = time.perf_counter()
-
+def _read_batch(args: argparse.Namespace):
     print(f"Reading input: {args.input}")
     batch = read_ip_csv(args.input, column=args.ip_column)
     print(f"Valid IP rows: {len(batch.values):,}")
@@ -83,39 +87,68 @@ def _run_aws(args: argparse.Namespace) -> int:
             print(f"  row {invalid.row_number}: {display} ({invalid.reason})")
         if len(batch.invalid) > 5:
             print(f"  ...and {len(batch.invalid) - 5:,} more")
+    return batch
 
+
+def _run_aws(args: argparse.Namespace) -> int:
+    started = time.perf_counter()
+    batch = _read_batch(args)
     provider = AwsProvider(ranges_file=args.ranges_file)
     source = str(args.ranges_file) if args.ranges_file else "current AWS feed"
     print(f"Loading AWS ranges: {source}")
     feed = provider.load_feed()
     print(
-        "AWS publication: "
-        f"{feed.create_date or 'unknown'}; "
-        f"IPv4 prefixes: {feed.ipv4_count:,}; "
-        f"IPv6 prefixes: {feed.ipv6_count:,}"
+        f"AWS publication: {feed.create_date or 'unknown'}; "
+        f"IPv4 prefixes: {feed.ipv4_count:,}; IPv6 prefixes: {feed.ipv6_count:,}"
+    )
+    return _resolve_and_write(
+        started, batch, feed.prefixes, args.output, write_aws_matches_csv
     )
 
-    resolver = Resolver(feed.prefixes)
+
+def _run_azure(args: argparse.Namespace) -> int:
+    started = time.perf_counter()
+    batch = _read_batch(args)
+    provider = AzureProvider(ranges_file=args.ranges_file)
+    source = (
+        str(args.ranges_file)
+        if args.ranges_file
+        else "current Azure Service Tags feed"
+    )
+    print(f"Loading Azure ranges: {source}")
+    feed = provider.load_feed()
+    print(
+        f"Azure cloud: {feed.cloud or 'unknown'}; change number: "
+        f"{feed.change_number if feed.change_number is not None else 'unknown'}; "
+        f"IPv4 prefixes: {feed.ipv4_count:,}; IPv6 prefixes: {feed.ipv6_count:,}"
+    )
+    return _resolve_and_write(
+        started, batch, feed.prefixes, args.output, write_azure_matches_csv
+    )
+
+
+def _resolve_and_write(started, batch, prefixes, output, writer) -> int:
+    resolver = Resolver(prefixes)
     resolutions = resolver.resolve_many(batch.values)
     matched_inputs = sum(resolution.matched for resolution in resolutions)
-    rows = write_aws_matches_csv(args.output, resolutions)
-
+    rows = writer(output, resolutions)
     elapsed = time.perf_counter() - started
     print(f"Matched input rows: {matched_inputs:,}")
     print(f"Output match rows: {rows:,}")
-    print(f"Output: {args.output}")
+    print(f"Output: {output}")
     print(f"Completed in {elapsed:.2f} seconds")
     return 0
 
 
-def _run_compare_aws(args: argparse.Namespace) -> int:
-    only_old, only_new = compare_aws_csv(args.old, args.new)
-
+def _run_compare(args, comparer, *, label: str) -> int:
+    only_old, only_new = comparer(args.old, args.new)
     if not only_old and not only_new:
-        print("MATCH: both CSVs contain the same AWS match rows (row order ignored).")
+        print(
+            f"MATCH: both CSVs contain the same {label} match rows "
+            "(row order ignored)."
+        )
         return 0
-
-    print("DIFFERENCE: AWS outputs are not identical.")
+    print(f"DIFFERENCE: {label} outputs are not identical.")
     print(f"Rows only in legacy output: {sum(only_old.values()):,}")
     _print_counter(only_old, args.show)
     print(f"Rows only in Python output: {sum(only_new.values()):,}")
@@ -124,12 +157,10 @@ def _run_compare_aws(args: argparse.Namespace) -> int:
 
 
 def _print_counter(rows, limit: int) -> None:
-    shown = 0
-    for row, count in rows.items():
+    for shown, (row, count) in enumerate(rows.items()):
         if shown >= limit:
             break
         print(f"  x{count} | " + " | ".join(row))
-        shown += 1
 
 
 if __name__ == "__main__":

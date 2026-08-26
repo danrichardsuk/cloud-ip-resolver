@@ -17,6 +17,14 @@ AWS_OUTPUT_FIELDS = (
     "Service",
     "NetworkBorderGroup",
 )
+AZURE_OUTPUT_FIELDS = (
+    "IPAddress",
+    "Name",
+    "Prefix",
+    "Region",
+    "SystemService",
+    "NetworkFeatures",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,11 +41,7 @@ class InputBatch:
 
 
 def read_ip_csv(path: str | Path, *, column: str = "IPAddress") -> InputBatch:
-    """Read canonical IPv4/IPv6 values from a CSV column.
-
-    Invalid values are collected instead of aborting the entire batch.
-    Row numbers use the physical CSV row number, including the header row.
-    """
+    """Read canonical IPv4/IPv6 values from a CSV column."""
 
     values: list[str] = []
     invalid: list[InvalidInput] = []
@@ -51,8 +55,7 @@ def read_ip_csv(path: str | Path, *, column: str = "IPAddress") -> InputBatch:
             )
 
         for row_number, row in enumerate(reader, start=2):
-            raw = row.get(column)
-            value = (raw or "").strip()
+            value = (row.get(column) or "").strip()
             if not value:
                 invalid.append(InvalidInput(row_number, value, "empty value"))
                 continue
@@ -72,32 +75,65 @@ def write_aws_matches_csv(
     path: str | Path,
     resolutions: Iterable[Resolution],
 ) -> int:
-    """Write AWS matches using the same five columns as the PowerShell v3 output."""
+    """Write AWS matches using the legacy PowerShell v3 columns."""
 
+    return _write_matches_csv(
+        path,
+        AWS_OUTPUT_FIELDS,
+        resolutions,
+        provider="AWS",
+        row_factory=lambda resolution, match: {
+            "IPAddress": str(resolution.ip),
+            "Prefix": str(match.network),
+            "Region": match.region or "",
+            "Service": match.service or "",
+            "NetworkBorderGroup": match.metadata.get("network_border_group") or "",
+        },
+    )
+
+
+def write_azure_matches_csv(
+    path: str | Path,
+    resolutions: Iterable[Resolution],
+) -> int:
+    """Write Azure matches using the legacy PowerShell v3 columns."""
+
+    return _write_matches_csv(
+        path,
+        AZURE_OUTPUT_FIELDS,
+        resolutions,
+        provider="Azure",
+        row_factory=lambda resolution, match: {
+            "IPAddress": str(resolution.ip),
+            "Name": match.metadata.get("name") or match.scope or "",
+            "Prefix": match.metadata.get("published_prefix") or str(match.network),
+            "Region": match.region or "",
+            "SystemService": match.service or "",
+            "NetworkFeatures": match.metadata.get("network_features") or "",
+        },
+    )
+
+
+def _write_matches_csv(
+    path,
+    fields,
+    resolutions,
+    *,
+    provider,
+    row_factory,
+) -> int:
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     row_count = 0
 
     with output_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=AWS_OUTPUT_FIELDS)
+        writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
-
         for resolution in resolutions:
             for match in resolution.matches:
-                if match.provider != "AWS":
+                if match.provider != provider:
                     continue
-                writer.writerow(
-                    {
-                        "IPAddress": str(resolution.ip),
-                        "Prefix": str(match.network),
-                        "Region": match.region or "",
-                        "Service": match.service or "",
-                        "NetworkBorderGroup": match.metadata.get(
-                            "network_border_group"
-                        )
-                        or "",
-                    }
-                )
+                writer.writerow(row_factory(resolution, match))
                 row_count += 1
 
     return row_count

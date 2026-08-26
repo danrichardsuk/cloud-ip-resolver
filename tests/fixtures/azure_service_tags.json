@@ -1,0 +1,30 @@
+{
+  "changeNumber": 999,
+  "cloud": "Public",
+  "values": [
+    {
+      "name": "AzureCloud.TestRegion",
+      "id": "AzureCloud.TestRegion",
+      "properties": {
+        "changeNumber": 12,
+        "region": "testregion",
+        "platform": "Azure",
+        "systemService": "",
+        "networkFeatures": ["API", "NSG"],
+        "addressPrefixes": ["20.0.0.0/8", "2001:db8:2000::/35"]
+      }
+    },
+    {
+      "name": "Storage.TestRegion",
+      "id": "Storage.TestRegion",
+      "properties": {
+        "changeNumber": 34,
+        "region": "testregion",
+        "platform": "Azure",
+        "systemService": "Storage",
+        "networkFeatures": null,
+        "addressPrefixes": ["20.1.0.0/16"]
+      }
+    }
+  ]
+}
