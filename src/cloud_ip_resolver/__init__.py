@@ -23,4 +23,4 @@ __all__ = [
 
 # The version is kept in code as well as pyproject.toml so a packaged
 # application can display it without having to parse project configuration.
-__version__ = "0.7.1"
+__version__ = "0.7.2"
