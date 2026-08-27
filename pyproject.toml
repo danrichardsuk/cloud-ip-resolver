@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cloud-ip-resolver"
-version = "0.7.3"
+version = "0.8.0"
 description = "Resolve public IP addresses against published cloud-provider IP ranges."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -19,7 +19,8 @@ cloud-ip-resolver-gui = "cloud_ip_resolver.desktop:main"
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.0"
+  "pytest>=8.0",
+  "pyinstaller>=6.22,<7.0"
 ]
 
 [tool.setuptools.packages.find]
