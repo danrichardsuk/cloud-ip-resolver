@@ -82,12 +82,28 @@ jobs:
           $Title = "Cloud IP Resolver $env:TAG_NAME"
           $ExePath = "dist\CloudIPResolver.exe"
           $ChecksumPath = "dist\CloudIPResolver.exe.sha256"
+          $NotesPath = "RELEASE_NOTES.md"
+
+          # Curated release notes are kept in the repository so download/use
+          # instructions stay understandable to non-developer users.
+          if (-not (Test-Path $NotesPath -PathType Leaf)) {
+              throw "Release notes file not found: $NotesPath"
+          }
 
           # If the release already exists (for example after re-running a failed
-          # workflow), replace its assets. Otherwise create it from the pushed tag.
+          # workflow), refresh its notes and replace the build assets. Otherwise
+          # create it from the pushed tag with the same curated notes.
           gh release view $env:TAG_NAME --repo $Repository *> $null
           if ($LASTEXITCODE -eq 0) {
-              Write-Host "Release already exists; replacing its build assets."
+              Write-Host "Release already exists; refreshing notes and build assets."
+              gh release edit $env:TAG_NAME `
+                  --repo $Repository `
+                  --title $Title `
+                  --notes-file $NotesPath
+              if ($LASTEXITCODE -ne 0) {
+                  throw "GitHub Release notes update failed."
+              }
+
               gh release upload $env:TAG_NAME $ExePath $ChecksumPath `
                   --repo $Repository --clobber
           }
@@ -96,7 +112,7 @@ jobs:
               gh release create $env:TAG_NAME $ExePath $ChecksumPath `
                   --repo $Repository `
                   --verify-tag `
-                  --generate-notes `
+                  --notes-file $NotesPath `
                   --title $Title
           }
 
