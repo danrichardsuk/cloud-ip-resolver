@@ -2,7 +2,7 @@
 
 Cloud IP Resolver matches public IP addresses against published cloud-provider IP ranges and returns the public metadata associated with each match.
 
-The project has been rebuilt from an existing PowerShell proof of concept into a reusable Python engine that powers both a command-line tool and a Tkinter desktop interface. Local Windows PyInstaller packaging is now configured; automated builds/releases are the next delivery milestone.
+The project has been rebuilt from an existing PowerShell proof of concept into a reusable Python engine that powers both a command-line tool and a Tkinter desktop interface. Local Windows packaging, automated Windows builds and versioned GitHub Releases are now configured.
 
 ## Goals
 
@@ -37,7 +37,7 @@ Provider adapters are responsible only for downloading and translating provider-
 
 ## Current status
 
-All three provider adapters have been implemented and validated against the original PowerShell scripts on the real input datasets. The unified multi-provider workflow and desktop GUI are implemented, and a repeatable local Windows PyInstaller build is configured.
+All three provider adapters have been implemented and validated against the original PowerShell scripts on the real input datasets. The unified multi-provider workflow, desktop GUI, standalone Windows packaging and automated GitHub build/release path are implemented.
 
 The project currently includes:
 
@@ -54,10 +54,12 @@ The project currently includes:
 - one-input/all-provider combined output
 - Tkinter desktop GUI with provider selection, file pickers, non-blocking resolution and contextual result summaries
 - local one-file/windowed Windows PyInstaller packaging
+- GitHub Actions Windows builds on `main`
+- version-tag GitHub Releases with EXE and SHA-256 checksum assets
 - beginner/analyst-oriented module, class and function documentation throughout source and tests
-- unit and integration-style tests for matching, provider parsing, CSV handling, comparison behaviour, unified workflows and packaging contracts
+- unit and integration-style tests for matching, provider parsing, CSV handling, comparison behaviour, unified workflows and packaging/delivery contracts
 
-Automated Windows builds, versioned releases and code signing are the next major milestones.
+Code signing/SmartScreen hardening is the next major distribution milestone.
 
 ## Development
 
@@ -94,6 +96,12 @@ dist\CloudIPResolver.exe
 
 See `WINDOWS_BUILD.md` for the build design, validation checklist and troubleshooting context.
 
+### Automated builds and releases
+
+Every push to `main` runs the full Windows build in GitHub Actions and stores `CloudIPResolver.exe` plus its SHA-256 checksum as a 30-day workflow artifact. Pushing a matching version tag such as `v0.8.0` additionally publishes those files as durable GitHub Release assets.
+
+See `RELEASES.md` for the release procedure, version/tag safety check and download model. If the repository is private, Actions artifacts and Release assets are only available to users who have repository access.
+
 ### Reading the code
 
 Every Python source and test module starts with a high-level explanation of its role. Classes and functions use docstrings that explain their purpose, inputs, outputs, important exceptions and non-obvious design choices. Inline comments are reserved for logic where the implementation itself is not immediately obvious, such as CIDR bucketing and provider-specific metadata mapping.
@@ -108,7 +116,7 @@ A useful reading order for someone new to the project is:
 6. `cli.py` — command-line orchestration.
 7. `gui.py` and `desktop.py` — reusable Tkinter logic and final analyst-facing presentation.
 8. `tests/` — small examples of expected behaviour and edge cases.
-9. `CloudIPResolver.spec` and `scripts/build_windows.ps1` — Windows packaging.
+9. `CloudIPResolver.spec`, `scripts/build_windows.ps1` and `.github/workflows/windows-build.yml` — Windows packaging and delivery automation.
 
 ## Desktop GUI
 
