@@ -3,6 +3,15 @@
 from .matcher import PrefixMatcher
 from .models import CloudPrefix, Resolution
 from .resolver import Resolver
+from .workflow import MultiProviderResult, MultiProviderWorkflow, ProviderRangeSummary
 
-__all__ = ["CloudPrefix", "PrefixMatcher", "Resolution", "Resolver"]
-__version__ = "0.4.0"
+__all__ = [
+    "CloudPrefix",
+    "MultiProviderResult",
+    "MultiProviderWorkflow",
+    "PrefixMatcher",
+    "ProviderRangeSummary",
+    "Resolution",
+    "Resolver",
+]
+__version__ = "0.5.0"

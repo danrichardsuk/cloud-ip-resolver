@@ -31,6 +31,16 @@ GCP_OUTPUT_FIELDS = (
     "Service",
     "Scope",
 )
+COMBINED_OUTPUT_FIELDS = (
+    "IPAddress",
+    "Provider",
+    "Prefix",
+    "Service",
+    "Region",
+    "Scope",
+    "NetworkBorderGroup",
+    "NetworkFeatures",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +148,47 @@ def write_gcp_matches_csv(
             "Scope": match.scope or "",
         },
     )
+
+
+def write_combined_matches_csv(
+    path: str | Path,
+    resolutions: Iterable[Resolution],
+) -> int:
+    """Write every provider match using the unified multi-provider schema.
+
+    Unmatched input addresses are intentionally omitted, matching the existing
+    provider-specific output behaviour.
+    """
+
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    row_count = 0
+
+    with output_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=COMBINED_OUTPUT_FIELDS)
+        writer.writeheader()
+        for resolution in resolutions:
+            for match in resolution.matches:
+                writer.writerow(
+                    {
+                        "IPAddress": str(resolution.ip),
+                        "Provider": match.provider,
+                        "Prefix": match.metadata.get("published_prefix")
+                        or str(match.network),
+                        "Service": match.service or "",
+                        "Region": match.region or "",
+                        "Scope": match.scope or "",
+                        "NetworkBorderGroup": match.metadata.get(
+                            "network_border_group"
+                        )
+                        or "",
+                        "NetworkFeatures": match.metadata.get("network_features")
+                        or "",
+                    }
+                )
+                row_count += 1
+
+    return row_count
 
 
 def _write_matches_csv(

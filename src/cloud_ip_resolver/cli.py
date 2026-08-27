@@ -12,12 +12,14 @@ from .io import (
     read_ip_csv,
     write_aws_matches_csv,
     write_azure_matches_csv,
+    write_combined_matches_csv,
     write_gcp_matches_csv,
 )
 from .providers.aws import AwsProvider
 from .providers.azure import AzureProvider
 from .providers.gcp import GcpProvider
 from .resolver import Resolver
+from .workflow import MultiProviderWorkflow
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -39,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
         "gcp", help="Resolve a CSV against Google Cloud public ranges"
     )
     _add_resolve_arguments(gcp, default_output="output_gcp.csv")
+
+    all_providers = subparsers.add_parser(
+        "all", help="Resolve one CSV against AWS, Azure, and Google Cloud"
+    )
+    _add_all_resolve_arguments(all_providers)
 
     compare_aws = subparsers.add_parser(
         "compare-aws", help="Compare legacy and Python AWS output CSVs ignoring row order"
@@ -70,6 +77,33 @@ def _add_resolve_arguments(parser: argparse.ArgumentParser, *, default_output: s
     parser.add_argument("--ip-column", default="IPAddress")
 
 
+def _add_all_resolve_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("input", type=Path, help="Input CSV containing an IPAddress column")
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=Path("output_all.csv"),
+        help="Combined output CSV path (default: output_all.csv)",
+    )
+    parser.add_argument("--ip-column", default="IPAddress")
+    parser.add_argument(
+        "--aws-ranges-file",
+        type=Path,
+        help="Use a saved AWS ip-ranges.json instead of the current feed",
+    )
+    parser.add_argument(
+        "--azure-ranges-file",
+        type=Path,
+        help="Use a saved Azure ServiceTags_Public.json instead of the current feed",
+    )
+    parser.add_argument(
+        "--gcp-ranges-file",
+        type=Path,
+        help="Use a saved Google Cloud cloud.json instead of the current feed",
+    )
+
+
 def _add_compare_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("old", type=Path, help="Legacy PowerShell output CSV")
     parser.add_argument("new", type=Path, help="Python output CSV")
@@ -85,6 +119,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_azure(args)
         if args.command == "gcp":
             return _run_gcp(args)
+        if args.command == "all":
+            return _run_all(args)
         if args.command == "compare-aws":
             return _run_compare(args, compare_aws_csv, label="AWS")
         if args.command == "compare-azure":
@@ -163,6 +199,35 @@ def _run_gcp(args: argparse.Namespace) -> int:
     return _resolve_and_write(
         started, batch, feed.prefixes, args.output, write_gcp_matches_csv
     )
+
+
+def _run_all(args: argparse.Namespace) -> int:
+    started = time.perf_counter()
+    batch = _read_batch(args)
+
+    workflow = MultiProviderWorkflow(
+        [
+            AwsProvider(ranges_file=args.aws_ranges_file),
+            AzureProvider(ranges_file=args.azure_ranges_file),
+            GcpProvider(ranges_file=args.gcp_ranges_file),
+        ]
+    )
+    print("Loading AWS, Azure, and Google Cloud ranges...")
+    result = workflow.resolve_many(batch.values)
+
+    for summary in result.provider_summaries:
+        print(
+            f"{summary.provider}: {summary.prefix_count:,} prefixes "
+            f"(IPv4: {summary.ipv4_count:,}; IPv6: {summary.ipv6_count:,})"
+        )
+
+    rows = write_combined_matches_csv(args.output, result.resolutions)
+    elapsed = time.perf_counter() - started
+    print(f"Matched input rows: {result.matched_input_count:,}")
+    print(f"Output match rows: {rows:,}")
+    print(f"Output: {args.output}")
+    print(f"Completed in {elapsed:.2f} seconds")
+    return 0
 
 
 def _resolve_and_write(started, batch, prefixes, output, writer) -> int:

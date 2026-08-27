@@ -20,6 +20,9 @@ The project is being rebuilt from an existing PowerShell proof of concept into a
 Input files / Desktop GUI / CLI
               |
               v
+        Workflow layer
+              |
+              v
         Resolver engine
               |
               v
@@ -30,11 +33,11 @@ Input files / Desktop GUI / CLI
      AWS    Azure    GCP
 ```
 
-Provider adapters are responsible only for downloading and translating provider-specific data into a common `CloudPrefix` model. Matching is performed once by the shared resolver engine.
+Provider adapters are responsible only for downloading and translating provider-specific data into a common `CloudPrefix` model. Matching is performed once by the shared resolver engine. `MultiProviderWorkflow` loads any configured set of provider adapters and resolves one shared input list, so the same workflow can be reused by the CLI and future desktop GUI.
 
 ## Current status
 
-All three provider adapters are now implemented. AWS and Azure have been validated against the original PowerShell scripts on the real input data; Google Cloud is ready for the same parity run.
+All three provider adapters have been implemented and validated against the original PowerShell scripts on the real input datasets. The unified multi-provider workflow is also implemented.
 
 The project currently includes:
 
@@ -43,13 +46,15 @@ The project currently includes:
 - AWS `ip-ranges.json` download and parsing
 - Azure Public Service Tags discovery, download and parsing
 - Google Cloud `cloud.json` download and parsing
+- reusable multi-provider workflow layer
 - provider metadata preservation
 - CSV input validation
 - PowerShell-compatible AWS, Azure, and Google Cloud output CSVs
 - parity comparison commands for all three legacy PowerShell outputs
-- unit tests for matching, provider parsing, CSV handling, and comparison behaviour
+- one-input/all-provider combined output
+- unit and integration-style tests for matching, provider parsing, CSV handling, comparison behaviour, and unified workflows
 
-Unified multi-provider workflows, the desktop GUI, and Windows packaging will be added incrementally after provider parity is complete.
+The desktop GUI and Windows packaging are the next major milestones.
 
 ## Development
 
@@ -63,6 +68,16 @@ pytest
 ```
 
 End users will not be expected to install Python once the Windows executable is introduced.
+
+## Validated performance
+
+All benchmarks used the real legacy input datasets and produced exact row parity with the non-`s` PowerShell implementations.
+
+| Provider | Legacy PowerShell | Python | Speed-up | Output rows |
+| --- | ---: | ---: | ---: | ---: |
+| AWS | 577.55 s | 1.85 s | ~312x | 1,505 |
+| Azure | 916.29 s | 16.43 s | ~55.8x | 4,937 |
+| Google Cloud | 682.50 s | 0.36 s | ~1,896x | 42 |
 
 ## AWS
 
@@ -85,16 +100,6 @@ For a fair comparison with the legacy script, use the exact `ip-ranges.json` it 
 ```powershell
 cloud-ip-resolver aws input.csv -o output_python.csv --ranges-file .\ip-ranges.json
 cloud-ip-resolver compare-aws .\output_v3.csv .\output_python.csv
-```
-
-### Validated AWS benchmark
-
-A real-data parity run on 35,177 valid input IP rows produced exactly 1,505 match rows in both implementations:
-
-```text
-Legacy PowerShell: 577.55 seconds
-Python resolver:      1.85 seconds
-Speed-up:           ~312x
 ```
 
 The Python implementation also correctly reads AWS `ipv6_prefixes`; the legacy PowerShell v3 script only iterates the IPv4 `prefixes` array.
@@ -122,16 +127,6 @@ cloud-ip-resolver azure input.csv -o output_python.csv --ranges-file .\ServiceTa
 cloud-ip-resolver compare-azure .\output_v3.csv .\output_python.csv
 ```
 
-### Validated Azure benchmark
-
-A real-data parity run on 34,815 input IP rows produced exactly 4,937 match rows in both implementations:
-
-```text
-Legacy PowerShell: 916.29 seconds
-Python resolver:     16.43 seconds
-Speed-up:            ~55.8x
-```
-
 ## Google Cloud
 
 ### Run the resolver
@@ -155,7 +150,36 @@ cloud-ip-resolver gcp input.csv -o output_python.csv --ranges-file .\cloud.json
 cloud-ip-resolver compare-gcp .\output_google_cloud.csv .\output_python.csv
 ```
 
-The supplied legacy Google test input contains 34,815 IPv4 rows and no IPv6 rows, so an exact parity result is expected. The Python matcher also handles Google's non-byte-aligned IPv6 prefixes correctly; the legacy PowerShell implementation compares whole bytes and can be inaccurate for prefixes such as `/44`.
+The Python matcher also handles Google's non-byte-aligned IPv6 prefixes correctly; the legacy PowerShell implementation compares whole bytes and can be inaccurate for prefixes such as `/44`.
+
+## Unified multi-provider workflow
+
+One input CSV can now be checked against AWS, Azure, and Google Cloud in a single run:
+
+```powershell
+cloud-ip-resolver all input.csv -o output_all.csv
+```
+
+By default, the current feeds for all three providers are downloaded. Saved snapshots can be supplied independently, which is useful for repeatable testing:
+
+```powershell
+cloud-ip-resolver all input.csv -o output_all.csv `
+  --aws-ranges-file .\ip-ranges.json `
+  --azure-ranges-file .\ServiceTags_Public.json `
+  --gcp-ranges-file .\cloud.json
+```
+
+The combined output schema is:
+
+```text
+IPAddress,Provider,Prefix,Service,Region,Scope,NetworkBorderGroup,NetworkFeatures
+```
+
+Provider-specific fields are left blank when they do not apply. Azure Service Tag names and Google Cloud scopes are represented in `Scope`.
+
+Combined output preserves the original input order and duplicate input rows. If an IP matches multiple published prefixes, the most-specific CIDR is written first, consistent with the shared resolver. Unmatched input addresses are omitted, matching the existing provider-specific output behaviour.
+
+The separate `aws`, `azure`, and `gcp` commands remain unchanged and continue to produce their legacy-compatible provider-specific CSV formats.
 
 ## Invalid input
 
