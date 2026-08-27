@@ -6,7 +6,7 @@ CSV, and presents the result counts in a form that an analyst can read quickly.
 No cloud matching logic lives in the window code.
 
 The potentially slow work (downloading provider feeds and resolving a large CSV)
-runs on a background thread.  Tkinter itself is only touched from the main UI
+runs on a background thread. Tkinter itself is only touched from the main UI
 thread, which keeps the window responsive while a resolution is running.
 """
 
@@ -28,9 +28,6 @@ from .providers.azure import AzureProvider
 from .providers.gcp import GcpProvider
 from .workflow import MultiProviderResult, MultiProviderWorkflow
 
-# Importing this module should remain possible on headless test/build machines
-# where the optional system Tk libraries may not be installed.  The actual GUI
-# entry point gives a clear error if Tkinter is unavailable.
 try:  # pragma: no cover - availability depends on the Python installation.
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
@@ -48,6 +45,10 @@ DEFAULT_PROVIDER_BUILDERS: Mapping[str, Callable[[], Any]] = {
     "GCP": GcpProvider,
 }
 
+# A simple ASCII separator keeps the result summary readable in the Tk text box
+# and remains safe if it is copied into email, tickets, or terminals.
+SUMMARY_SEPARATOR = "-" * 44
+
 
 @dataclass(frozen=True, slots=True)
 class GuiRunRequest:
@@ -58,7 +59,7 @@ class GuiRunRequest:
         output_path: Combined CSV destination.
         providers: Provider names to include, normally some subset of
             ``AWS``, ``Azure`` and ``GCP``.
-        ip_column: Input column containing addresses.  ``IPAddress`` keeps the
+        ip_column: Input column containing addresses. ``IPAddress`` keeps the
             GUI compatible with the existing analyst files and CLI.
     """
 
@@ -70,12 +71,7 @@ class GuiRunRequest:
 
 @dataclass(frozen=True, slots=True)
 class GuiRunResult:
-    """Bundle everything the GUI needs to display after a completed job.
-
-    Keeping this as data rather than updating widgets inside the resolver makes
-    the execution path reusable and easy to unit-test without a graphical
-    display.
-    """
+    """Bundle everything the GUI needs to display after a completed job."""
 
     request: GuiRunRequest
     input_batch: InputBatch
@@ -87,17 +83,8 @@ class GuiRunResult:
 def normalise_provider_names(provider_names: Sequence[str]) -> tuple[str, ...]:
     """Validate provider names and return them in the standard display order.
 
-    Args:
-        provider_names: Names selected by the user.
-
-    Returns:
-        Unique provider names ordered AWS, Azure, GCP.
-
     Raises:
         ValueError: If no providers are selected or an unknown name is supplied.
-
-    Normalising the order keeps terminal, CSV and GUI summaries predictable even
-    if a caller constructs a request programmatically in a different order.
     """
 
     selected = tuple(provider_names)
@@ -112,18 +99,7 @@ def normalise_provider_names(provider_names: Sequence[str]) -> tuple[str, ...]:
 
 
 def validate_run_request(request: GuiRunRequest) -> GuiRunRequest:
-    """Validate paths/provider selection before starting network or matching work.
-
-    Args:
-        request: Candidate GUI request.
-
-    Returns:
-        A new request with provider names normalised into standard order.
-
-    Raises:
-        ValueError: For missing input/output values, a non-existent input file,
-            an output path that points to a directory, or invalid provider names.
-    """
+    """Validate paths/provider selection before network or matching work begins."""
 
     input_path = Path(request.input_path)
     output_path = Path(request.output_path)
@@ -151,16 +127,7 @@ def build_providers(
     *,
     builders: Mapping[str, Callable[[], Any]] | None = None,
 ) -> tuple[Any, ...]:
-    """Create provider adapters for the selected provider names.
-
-    Args:
-        provider_names: Valid provider names to instantiate.
-        builders: Optional name-to-constructor mapping.  Production uses the live
-            AWS/Azure/GCP adapters; tests inject tiny deterministic providers.
-
-    Returns:
-        Provider adapter instances in standard provider order.
-    """
+    """Create provider adapters for the selected provider names."""
 
     names = normalise_provider_names(provider_names)
     provider_builders = builders or DEFAULT_PROVIDER_BUILDERS
@@ -180,21 +147,9 @@ def run_resolution(
 ) -> GuiRunResult:
     """Execute one GUI resolution job without interacting with Tkinter widgets.
 
-    Args:
-        request: Input/output/provider choices from the GUI.
-        provider_builders: Optional injected provider constructors for tests.
-        clock: Timer function; injectable so elapsed-time formatting is testable.
-
-    Returns:
-        ``GuiRunResult`` containing input validation diagnostics, per-provider
-        matches, output-row count and elapsed time.
-
-    Raises:
-        OSError: If input/provider/output I/O fails.
-        ValueError: If the request or a provider feed is invalid.
-
-    This is the key seam between UI and business logic.  A future Windows EXE
-    still calls this same function; packaging does not change the resolver path.
+    This is the seam between UI and business logic. The Windows executable will
+    continue to call this same function, so packaging does not change resolver
+    behaviour.
     """
 
     validated = validate_run_request(request)
@@ -219,17 +174,15 @@ def run_resolution(
 
 
 def format_run_summary(result: GuiRunResult) -> str:
-    """Convert a completed run into the multi-line summary shown in the GUI.
+    """Convert a completed run into the structured summary shown in the GUI.
 
-    Args:
-        result: Completed GUI resolution result.
-
-    Returns:
-        Human-readable text containing input validation, provider prefix counts,
-        provider match counts, overall totals, elapsed time and output path.
+    Section headings and separators are included because a real three-provider
+    run can contain enough lines that a flat block of text is difficult to scan.
     """
 
     lines = [
+        "INPUT SUMMARY",
+        SUMMARY_SEPARATOR,
         f"Valid input rows: {len(result.input_batch.values):,}",
         f"Invalid/skipped rows: {len(result.input_batch.invalid):,}",
     ]
@@ -242,14 +195,14 @@ def format_run_summary(result: GuiRunResult) -> str:
         if len(result.input_batch.invalid) > 5:
             lines.append(f"  ...and {len(result.input_batch.invalid) - 5:,} more")
 
-    lines.extend(["", "Provider ranges:"])
+    lines.extend(["", "PROVIDER RANGES", SUMMARY_SEPARATOR])
     for summary in result.workflow_result.provider_summaries:
         lines.append(
             f"  {summary.provider}: {summary.prefix_count:,} prefixes "
             f"(IPv4 {summary.ipv4_count:,}; IPv6 {summary.ipv6_count:,})"
         )
 
-    lines.extend(["", "Provider matches:"])
+    lines.extend(["", "PROVIDER MATCHES", SUMMARY_SEPARATOR])
     for summary in result.workflow_result.provider_summaries:
         provider = summary.provider
         lines.append(
@@ -261,6 +214,8 @@ def format_run_summary(result: GuiRunResult) -> str:
     lines.extend(
         [
             "",
+            "OVERALL RESULTS",
+            SUMMARY_SEPARATOR,
             f"Matched input rows: {result.workflow_result.matched_input_count:,}",
             f"Output match rows: {result.rows_written:,}",
             f"Completed in {result.elapsed_seconds:.2f} seconds",
@@ -270,12 +225,14 @@ def format_run_summary(result: GuiRunResult) -> str:
     return "\n".join(lines)
 
 
-def default_output_path(input_path: str | Path) -> Path:
-    """Choose ``output_all.csv`` beside the selected input file.
+def format_completion_status(result: GuiRunResult) -> str:
+    """Return the concise success message displayed beside the action buttons."""
 
-    An output next to the source is a familiar default for analyst workflows,
-    while the Save/Browse button still lets the user choose any destination.
-    """
+    return f"Completed successfully in {result.elapsed_seconds:.2f} seconds"
+
+
+def default_output_path(input_path: str | Path) -> Path:
+    """Choose ``output_all.csv`` beside the selected input file."""
 
     path = Path(input_path)
     parent = path.parent if str(path.parent) else Path.cwd()
@@ -283,23 +240,13 @@ def default_output_path(input_path: str | Path) -> Path:
 
 
 def open_output_folder(output_path: str | Path) -> None:
-    """Open the folder containing a generated output file in the OS file browser.
-
-    Args:
-        output_path: Output CSV whose parent directory should be opened.
-
-    Raises:
-        ValueError: If the parent folder does not exist.
-        OSError: If the operating system cannot launch its file browser.
-    """
+    """Open the folder containing a generated output file in the OS file browser."""
 
     folder = Path(output_path).expanduser().resolve().parent
     if not folder.is_dir():
         raise ValueError(f"Output folder does not exist: {folder}")
 
     if os.name == "nt":
-        # ``startfile`` is Windows-only, so getattr avoids static/platform issues
-        # when the source is imported or tested on Linux/macOS.
         getattr(os, "startfile")(str(folder))
     elif sys.platform == "darwin":  # pragma: no cover - platform-specific UI.
         subprocess.Popen(["open", str(folder)])
@@ -311,15 +258,7 @@ class CloudIpResolverApp:
     """Main Tkinter window for selecting inputs, providers and viewing results."""
 
     def __init__(self, root: Any) -> None:
-        """Create widgets and initialise the window's state.
-
-        Args:
-            root: Tkinter root window.  Accepting it from the caller follows the
-                normal Tkinter pattern and makes lifecycle ownership explicit.
-
-        Raises:
-            RuntimeError: If this Python installation does not provide Tkinter.
-        """
+        """Create widgets and initialise the window's state."""
 
         if tk is None or ttk is None:
             raise RuntimeError(
@@ -329,7 +268,10 @@ class CloudIpResolverApp:
 
         self.root = root
         self.root.title("Cloud IP Resolver")
-        self.root.minsize(760, 560)
+        # Slightly taller than GUI v1 so the final totals are visible more often
+        # on a normal Windows display while the window remains freely resizable.
+        self.root.geometry("820x680")
+        self.root.minsize(800, 640)
 
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar(value=str(Path.cwd() / "output_all.csv"))
@@ -338,6 +280,7 @@ class CloudIpResolverApp:
             "Azure": tk.BooleanVar(value=True),
             "GCP": tk.BooleanVar(value=True),
         }
+        self.run_status_var = tk.StringVar(value="Ready")
         self._last_output: Path | None = None
 
         self._build_widgets()
@@ -388,15 +331,27 @@ class CloudIpResolverApp:
             state="disabled",
         )
         self.open_folder_button.pack(side="left", padx=(8, 0))
+        ttk.Label(actions, textvariable=self.run_status_var).pack(side="left", padx=(16, 0))
 
         self.progress = ttk.Progressbar(outer, mode="indeterminate")
         self.progress.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(0, 10))
+        # It is useful only while work is active. Hiding it while idle prevents
+        # the partly filled green block that otherwise remains after a run.
+        self.progress.grid_remove()
 
-        result_frame = ttk.LabelFrame(outer, text="Results", padding=8)
+        result_frame = ttk.LabelFrame(outer, text="Results", padding=10)
         result_frame.grid(row=6, column=0, columnspan=3, sticky="nsew")
         result_frame.rowconfigure(0, weight=1)
         result_frame.columnconfigure(0, weight=1)
-        self.status_text = tk.Text(result_frame, height=16, wrap="word", state="disabled")
+        self.status_text = tk.Text(
+            result_frame,
+            height=20,
+            wrap="word",
+            state="disabled",
+            font=("Consolas", 10),
+            padx=6,
+            pady=6,
+        )
         self.status_text.grid(row=0, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(result_frame, orient="vertical", command=self.status_text.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
@@ -450,7 +405,7 @@ class CloudIpResolverApp:
         return validate_run_request(request)
 
     def _start_resolution(self) -> None:
-        """Validate the form and start the expensive work on a background thread."""
+        """Validate the form and start expensive work on a background thread."""
 
         try:
             request = self._make_request()
@@ -460,7 +415,8 @@ class CloudIpResolverApp:
 
         self.resolve_button.configure(state="disabled")
         self.open_folder_button.configure(state="disabled")
-        self.progress.start(10)
+        self.run_status_var.set("Resolving...")
+        self._show_progress()
         self._set_status(
             "Resolving IP addresses...\n\n"
             "Provider feeds are being loaded and the input file is being matched."
@@ -474,7 +430,7 @@ class CloudIpResolverApp:
         worker.start()
 
     def _resolution_worker(self, request: GuiRunRequest) -> None:
-        """Run a resolution away from Tk's UI thread and marshal the result back."""
+        """Run resolution away from Tk's UI thread and marshal the result back."""
 
         try:
             result = run_resolution(request)
@@ -490,32 +446,58 @@ class CloudIpResolverApp:
         self.root.after(0, lambda result=result: self._finish_success(result))
 
     def _finish_success(self, result: GuiRunResult) -> None:
-        """Restore controls and display the summary after a successful worker run."""
+        """Restore controls and display the summary after a successful run."""
 
-        self.progress.stop()
+        self._hide_progress()
         self.resolve_button.configure(state="normal")
         self._last_output = result.request.output_path
         self.open_folder_button.configure(state="normal")
-        self._set_status(format_run_summary(result))
+        self.run_status_var.set(format_completion_status(result))
+        # Overall totals are at the bottom, so reveal them immediately.
+        self._set_status(format_run_summary(result), scroll_to_end=True)
 
     def _finish_error(self, message: str) -> None:
-        """Restore controls and present a friendly error after a failed worker run."""
+        """Restore controls and present a friendly error after a failed run."""
 
-        self.progress.stop()
+        self._hide_progress()
         self.resolve_button.configure(state="normal")
+        self.open_folder_button.configure(
+            state="normal" if self._last_output is not None else "disabled"
+        )
+        self.run_status_var.set("Resolution failed")
         self._set_status(f"Resolution failed.\n\n{message}")
         self._show_error(message)
 
-    def _set_status(self, text: str) -> None:
-        """Replace the read-only Results text while preserving its disabled state."""
+    def _show_progress(self) -> None:
+        """Reveal and animate the indeterminate progress indicator."""
+
+        self.progress.grid()
+        self.progress.start(10)
+
+    def _hide_progress(self) -> None:
+        """Stop, reset, and hide the progress indicator after a run finishes."""
+
+        self.progress.stop()
+        self.progress.configure(value=0)
+        self.progress.grid_remove()
+
+    def _set_status(self, text: str, *, scroll_to_end: bool = False) -> None:
+        """Replace Results text and position its viewport sensibly.
+
+        Args:
+            text: Complete replacement text.
+            scroll_to_end: When true, reveal the bottom so overall totals and
+                completion information are immediately visible.
+        """
 
         self.status_text.configure(state="normal")
         self.status_text.delete("1.0", "end")
         self.status_text.insert("1.0", text)
         self.status_text.configure(state="disabled")
+        self.status_text.see("end" if scroll_to_end else "1.0")
 
     def _show_error(self, message: str) -> None:
-        """Show a modal error dialog when Tkinter's messagebox service is available."""
+        """Show a modal error dialog when Tkinter's messagebox is available."""
 
         if messagebox is not None:
             messagebox.showerror("Cloud IP Resolver", message)
@@ -533,14 +515,7 @@ class CloudIpResolverApp:
 
 
 def main() -> int:
-    """Launch the desktop application and block until the user closes the window.
-
-    Returns:
-        ``0`` after a normal GUI shutdown.
-
-    Raises:
-        RuntimeError: If Tkinter is unavailable in this Python installation.
-    """
+    """Launch the desktop application and block until the user closes the window."""
 
     if tk is None:
         raise RuntimeError(
@@ -554,5 +529,5 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":  # Allows ``python -m cloud_ip_resolver.gui`` in development.
+if __name__ == "__main__":
     raise SystemExit(main())
