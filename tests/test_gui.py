@@ -17,6 +17,7 @@ from cloud_ip_resolver.gui import (
     default_output_path,
     format_completion_status,
     format_run_summary,
+    format_running_status,
     normalise_provider_names,
     run_resolution,
     validate_run_request,
@@ -202,10 +203,20 @@ def test_completion_status_is_short_and_explicit(tmp_path: Path) -> None:
     assert format_completion_status(result) == "Completed successfully in 1.75 seconds"
 
 
+def test_running_status_includes_elapsed_seconds() -> None:
+    """A changing elapsed value provides a clear second sign that work is active."""
+
+    assert format_running_status(0.2) == "Resolving... 0s elapsed"
+    assert format_running_status(24.98) == "Resolving... 24s elapsed"
+    assert format_running_status(1234.0) == "Resolving... 1,234s elapsed"
+
+
 class _FakeTextWidget:
     """Minimal text-widget stand-in for viewport behaviour tests."""
 
     def __init__(self) -> None:
+        """Initialise captured text and viewport position."""
+
         self.seen = None
         self.value = ""
 
@@ -228,8 +239,19 @@ class _FakeTextWidget:
         self.seen = index
 
 
-def test_status_box_can_auto_scroll_to_overall_totals() -> None:
-    """Successful runs should reveal the bottom summary rather than the first line."""
+def test_status_box_defaults_to_top_for_taller_result_area() -> None:
+    """Completed summaries should start at INPUT SUMMARY when no scroll is requested."""
+
+    app = CloudIpResolverApp.__new__(CloudIpResolverApp)
+    app.status_text = _FakeTextWidget()
+
+    app._set_status("INPUT SUMMARY\n...\nOVERALL RESULTS")
+
+    assert app.status_text.seen == "1.0"
+
+
+def test_status_box_can_still_scroll_to_end_when_explicitly_requested() -> None:
+    """Keep the helper flexible for any future view that needs the final line."""
 
     app = CloudIpResolverApp.__new__(CloudIpResolverApp)
     app.status_text = _FakeTextWidget()
@@ -241,12 +263,26 @@ def test_status_box_can_auto_scroll_to_overall_totals() -> None:
 
 
 class _FakeProgressbar:
-    """Minimal progress-bar stand-in for the idle reset behaviour."""
+    """Minimal progress-bar stand-in for animation/reset behaviour tests."""
 
     def __init__(self) -> None:
+        """Initialise captured progress-bar calls."""
+
         self.stopped = False
         self.removed = False
+        self.shown = False
         self.value = None
+        self.start_interval = None
+
+    def grid(self) -> None:
+        """Record that the progress bar was shown."""
+
+        self.shown = True
+
+    def start(self, interval) -> None:
+        """Record the requested animation interval."""
+
+        self.start_interval = interval
 
     def stop(self) -> None:
         """Record animation stop."""
@@ -262,6 +298,18 @@ class _FakeProgressbar:
         """Record that the progress bar was hidden."""
 
         self.removed = True
+
+
+def test_progress_bar_uses_less_aggressive_animation_interval() -> None:
+    """Avoid the previous 10 ms redraw rate that could look jerky under CPU load."""
+
+    app = CloudIpResolverApp.__new__(CloudIpResolverApp)
+    app.progress = _FakeProgressbar()
+
+    app._show_progress()
+
+    assert app.progress.shown
+    assert app.progress.start_interval == 50
 
 
 def test_progress_bar_is_reset_and_hidden_after_run() -> None:
