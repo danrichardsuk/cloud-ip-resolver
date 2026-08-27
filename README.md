@@ -2,7 +2,7 @@
 
 Cloud IP Resolver matches public IP addresses against published cloud-provider IP ranges and returns the public metadata associated with each match.
 
-The project is being rebuilt from an existing PowerShell proof of concept into a reusable Python engine that can later power both a command-line tool and a self-contained Windows desktop application.
+The project has been rebuilt from an existing PowerShell proof of concept into a reusable Python engine that powers both a command-line tool and a Tkinter desktop interface. The next delivery milestone is packaging that desktop application as a self-contained Windows executable.
 
 ## Goals
 
@@ -33,11 +33,11 @@ Input files / Desktop GUI / CLI
      AWS    Azure    GCP
 ```
 
-Provider adapters are responsible only for downloading and translating provider-specific data into a common `CloudPrefix` model. Matching is performed once by the shared resolver engine. `MultiProviderWorkflow` loads any configured set of provider adapters and resolves one shared input list, so the same workflow can be reused by the CLI and future desktop GUI.
+Provider adapters are responsible only for downloading and translating provider-specific data into a common `CloudPrefix` model. Matching is performed once by the shared resolver engine. `MultiProviderWorkflow` loads any configured set of provider adapters and resolves one shared input list, so the CLI and desktop GUI use the same business logic.
 
 ## Current status
 
-All three provider adapters have been implemented and validated against the original PowerShell scripts on the real input datasets. The unified multi-provider workflow is also implemented.
+All three provider adapters have been implemented and validated against the original PowerShell scripts on the real input datasets. The unified multi-provider workflow and first desktop GUI are also implemented.
 
 The project currently includes:
 
@@ -52,10 +52,11 @@ The project currently includes:
 - PowerShell-compatible AWS, Azure, and Google Cloud output CSVs
 - parity comparison commands for all three legacy PowerShell outputs
 - one-input/all-provider combined output
+- Tkinter desktop GUI with provider selection, file pickers, non-blocking resolution and result summaries
 - beginner/analyst-oriented module, class and function documentation throughout source and tests
 - unit and integration-style tests for matching, provider parsing, CSV handling, comparison behaviour, and unified workflows
 
-The desktop GUI and Windows packaging are the next major milestones.
+Standalone Windows packaging, automated Windows builds and versioned releases are the next major milestones.
 
 ## Development
 
@@ -66,6 +67,12 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev]"
 pytest
+```
+
+Launch the development GUI with:
+
+```powershell
+cloud-ip-resolver-gui
 ```
 
 End users will not be expected to install Python once the Windows executable is introduced.
@@ -82,7 +89,31 @@ A useful reading order for someone new to the project is:
 4. `workflow.py` — how several providers are combined for one run.
 5. `io.py` — input validation and CSV output contracts.
 6. `cli.py` — command-line orchestration.
-7. `tests/` — small examples of expected behaviour and edge cases.
+7. `gui.py` — the Tkinter front end and reusable GUI execution helpers.
+8. `tests/` — small examples of expected behaviour and edge cases.
+
+## Desktop GUI
+
+The first desktop interface is implemented with Python's standard Tkinter toolkit so it adds no third-party runtime dependency and is suitable for the planned PyInstaller Windows executable. During development, launch it with:
+
+```powershell
+cloud-ip-resolver-gui
+```
+
+The GUI currently provides:
+
+- input CSV and output CSV file pickers
+- independent AWS, Azure and Google Cloud checkboxes (all selected by default)
+- one combined output using the same namespaced schema as `cloud-ip-resolver all`
+- a background worker thread so provider downloads and matching do not freeze the window
+- valid/invalid input counts and examples of invalid rows
+- loaded IPv4/IPv6 prefix counts per provider
+- matched-input and output-match counts per provider
+- overall matched-input/output-row totals and elapsed time
+- an **Open Output Folder** action after a successful run
+- friendly validation and I/O error dialogs instead of terminal tracebacks
+
+The GUI calls the same `MultiProviderWorkflow` and CSV writer as the CLI rather than reimplementing matching logic. Provider feeds are live in GUI v1; saved-snapshot controls remain available through the CLI for parity and reproducible testing.
 
 ## Validated performance
 
