@@ -1,13 +1,14 @@
 """Tkinter desktop interface for Cloud IP Resolver.
 
-The GUI deliberately stays thin: it collects file/provider choices, calls the
-same reusable ``MultiProviderWorkflow`` used by the CLI, writes the combined
-CSV, and presents the result counts in a form that an analyst can read quickly.
-No cloud matching logic lives in the window code.
+The GUI is deliberately a thin presentation layer. It collects file/provider
+choices, calls the same reusable ``MultiProviderWorkflow`` used by the CLI,
+writes the combined CSV, and presents result counts in a form that an analyst
+can scan quickly. No cloud matching logic lives in the window code.
 
-The potentially slow work (downloading provider feeds and resolving a large CSV)
-runs on a background thread. Tkinter itself is only touched from the main UI
-thread, which keeps the window responsive while a resolution is running.
+Potentially slow work runs on a background thread so Tkinter's main UI thread
+can keep processing window events. The running status also shows elapsed time,
+which gives the user a second sign of life if the progress animation briefly
+stutters during CPU-heavy matching.
 """
 
 from __future__ import annotations
@@ -45,8 +46,8 @@ DEFAULT_PROVIDER_BUILDERS: Mapping[str, Callable[[], Any]] = {
     "GCP": GcpProvider,
 }
 
-# A simple ASCII separator keeps the result summary readable in the Tk text box
-# and remains safe if it is copied into email, tickets, or terminals.
+# ASCII separators stay readable in the Tk text box and when copied into email,
+# tickets, chat, or a terminal.
 SUMMARY_SEPARATOR = "-" * 44
 
 
@@ -57,10 +58,10 @@ class GuiRunRequest:
     Attributes:
         input_path: CSV containing the input IP-address column.
         output_path: Combined CSV destination.
-        providers: Provider names to include, normally some subset of
-            ``AWS``, ``Azure`` and ``GCP``.
+        providers: Provider names to include, normally some subset of AWS,
+            Azure and GCP.
         ip_column: Input column containing addresses. ``IPAddress`` keeps the
-            GUI compatible with the existing analyst files and CLI.
+            GUI compatible with existing analyst files and the CLI.
     """
 
     input_path: Path
@@ -71,7 +72,7 @@ class GuiRunRequest:
 
 @dataclass(frozen=True, slots=True)
 class GuiRunResult:
-    """Bundle everything the GUI needs to display after a completed job."""
+    """Bundle the data the GUI needs after one completed resolution job."""
 
     request: GuiRunRequest
     input_batch: InputBatch
@@ -82,6 +83,12 @@ class GuiRunResult:
 
 def normalise_provider_names(provider_names: Sequence[str]) -> tuple[str, ...]:
     """Validate provider names and return them in the standard display order.
+
+    Args:
+        provider_names: Names selected by the user or supplied by a test/caller.
+
+    Returns:
+        Unique provider names ordered AWS, Azure, GCP.
 
     Raises:
         ValueError: If no providers are selected or an unknown name is supplied.
@@ -99,7 +106,17 @@ def normalise_provider_names(provider_names: Sequence[str]) -> tuple[str, ...]:
 
 
 def validate_run_request(request: GuiRunRequest) -> GuiRunRequest:
-    """Validate paths/provider selection before network or matching work begins."""
+    """Validate paths/provider selection before network or matching work begins.
+
+    Args:
+        request: Candidate request created from the form or a programmatic caller.
+
+    Returns:
+        A normalised request ready for execution.
+
+    Raises:
+        ValueError: If the input/output paths or provider selection are invalid.
+    """
 
     input_path = Path(request.input_path)
     output_path = Path(request.output_path)
@@ -127,7 +144,16 @@ def build_providers(
     *,
     builders: Mapping[str, Callable[[], Any]] | None = None,
 ) -> tuple[Any, ...]:
-    """Create provider adapters for the selected provider names."""
+    """Create provider adapters for the selected provider names.
+
+    Args:
+        provider_names: Valid provider names to instantiate.
+        builders: Optional constructor mapping. Tests inject deterministic stubs;
+            production uses the live provider adapters.
+
+    Returns:
+        Provider adapter instances in the standard provider order.
+    """
 
     names = normalise_provider_names(provider_names)
     provider_builders = builders or DEFAULT_PROVIDER_BUILDERS
@@ -147,8 +173,17 @@ def run_resolution(
 ) -> GuiRunResult:
     """Execute one GUI resolution job without interacting with Tkinter widgets.
 
-    This is the seam between UI and business logic. The Windows executable will
-    continue to call this same function, so packaging does not change resolver
+    Args:
+        request: Input/output/provider choices from the GUI.
+        provider_builders: Optional injected provider constructors for tests.
+        clock: Timer function, injectable for deterministic elapsed-time tests.
+
+    Returns:
+        ``GuiRunResult`` containing input diagnostics, provider results, output
+        row count and elapsed time.
+
+    This function is the seam between UI and business logic. The Windows
+    executable will continue to call it, so packaging does not alter resolution
     behaviour.
     """
 
@@ -176,8 +211,9 @@ def run_resolution(
 def format_run_summary(result: GuiRunResult) -> str:
     """Convert a completed run into the structured summary shown in the GUI.
 
-    Section headings and separators are included because a real three-provider
-    run can contain enough lines that a flat block of text is difficult to scan.
+    Returns:
+        Multi-line text with input validation, provider ranges, provider match
+        counts, overall totals, runtime and output path.
     """
 
     lines = [
@@ -231,6 +267,21 @@ def format_completion_status(result: GuiRunResult) -> str:
     return f"Completed successfully in {result.elapsed_seconds:.2f} seconds"
 
 
+def format_running_status(elapsed_seconds: float) -> str:
+    """Return a live status message that proves a resolution is still active.
+
+    Args:
+        elapsed_seconds: Seconds since the user started the run.
+
+    The elapsed timer is intentionally independent of the progress-bar position.
+    An indeterminate bar has no real percentage and can occasionally stutter
+    under CPU load, while a changing elapsed value still reassures the user that
+    the application has not silently failed.
+    """
+
+    return f"Resolving... {int(elapsed_seconds):,}s elapsed"
+
+
 def default_output_path(input_path: str | Path) -> Path:
     """Choose ``output_all.csv`` beside the selected input file."""
 
@@ -258,7 +309,11 @@ class CloudIpResolverApp:
     """Main Tkinter window for selecting inputs, providers and viewing results."""
 
     def __init__(self, root: Any) -> None:
-        """Create widgets and initialise the window's state."""
+        """Create widgets and initialise the window's state.
+
+        Args:
+            root: Tkinter root window owned by the application entry point.
+        """
 
         if tk is None or ttk is None:
             raise RuntimeError(
@@ -268,10 +323,11 @@ class CloudIpResolverApp:
 
         self.root = root
         self.root.title("Cloud IP Resolver")
-        # Slightly taller than GUI v1 so the final totals are visible more often
-        # on a normal Windows display while the window remains freely resizable.
-        self.root.geometry("820x680")
-        self.root.minsize(800, 640)
+        # The v0.7.2 layout is slightly narrower and taller. The paths still have
+        # ample room, while the additional vertical space lets the complete
+        # three-provider summary fit on screen more often without scrolling.
+        self.root.geometry("760x740")
+        self.root.minsize(720, 680)
 
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar(value=str(Path.cwd() / "output_all.csv"))
@@ -282,6 +338,8 @@ class CloudIpResolverApp:
         }
         self.run_status_var = tk.StringVar(value="Ready")
         self._last_output: Path | None = None
+        self._run_started_at: float | None = None
+        self._run_status_timer_id: Any | None = None
 
         self._build_widgets()
 
@@ -335,8 +393,6 @@ class CloudIpResolverApp:
 
         self.progress = ttk.Progressbar(outer, mode="indeterminate")
         self.progress.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(0, 10))
-        # It is useful only while work is active. Hiding it while idle prevents
-        # the partly filled green block that otherwise remains after a run.
         self.progress.grid_remove()
 
         result_frame = ttk.LabelFrame(outer, text="Results", padding=10)
@@ -345,7 +401,7 @@ class CloudIpResolverApp:
         result_frame.columnconfigure(0, weight=1)
         self.status_text = tk.Text(
             result_frame,
-            height=20,
+            height=24,
             wrap="word",
             state="disabled",
             font=("Consolas", 10),
@@ -415,7 +471,7 @@ class CloudIpResolverApp:
 
         self.resolve_button.configure(state="disabled")
         self.open_folder_button.configure(state="disabled")
-        self.run_status_var.set("Resolving...")
+        self._start_running_status()
         self._show_progress()
         self._set_status(
             "Resolving IP addresses...\n\n"
@@ -448,17 +504,20 @@ class CloudIpResolverApp:
     def _finish_success(self, result: GuiRunResult) -> None:
         """Restore controls and display the summary after a successful run."""
 
+        self._stop_running_status()
         self._hide_progress()
         self.resolve_button.configure(state="normal")
         self._last_output = result.request.output_path
         self.open_folder_button.configure(state="normal")
         self.run_status_var.set(format_completion_status(result))
-        # Overall totals are at the bottom, so reveal them immediately.
-        self._set_status(format_run_summary(result), scroll_to_end=True)
+        # The taller result area is designed to show the complete summary, so
+        # start at the top rather than forcing the viewport to the last line.
+        self._set_status(format_run_summary(result))
 
     def _finish_error(self, message: str) -> None:
         """Restore controls and present a friendly error after a failed run."""
 
+        self._stop_running_status()
         self._hide_progress()
         self.resolve_button.configure(state="normal")
         self.open_folder_button.configure(
@@ -468,11 +527,47 @@ class CloudIpResolverApp:
         self._set_status(f"Resolution failed.\n\n{message}")
         self._show_error(message)
 
+    def _start_running_status(self) -> None:
+        """Start the once-per-second elapsed-time status beside the buttons."""
+
+        self._run_started_at = time.perf_counter()
+        self._update_running_status()
+
+    def _update_running_status(self) -> None:
+        """Refresh elapsed time while a job is active and schedule the next update."""
+
+        if self._run_started_at is None:
+            return
+
+        elapsed = time.perf_counter() - self._run_started_at
+        self.run_status_var.set(format_running_status(elapsed))
+        self._run_status_timer_id = self.root.after(1000, self._update_running_status)
+
+    def _stop_running_status(self) -> None:
+        """Stop the elapsed-time timer when the worker succeeds or fails."""
+
+        timer_id = self._run_status_timer_id
+        self._run_status_timer_id = None
+        self._run_started_at = None
+        if timer_id is not None:
+            try:
+                self.root.after_cancel(timer_id)
+            except Exception:
+                # The callback may already have fired between worker completion
+                # and UI handling. In that harmless race there is nothing left
+                # to cancel.
+                pass
+
     def _show_progress(self) -> None:
-        """Reveal and animate the indeterminate progress indicator."""
+        """Reveal and animate the indeterminate progress indicator.
+
+        Tkinter's default-style animation is timer-driven. A 50 ms step interval
+        is deliberately less aggressive than the previous 10 ms value, reducing
+        needless redraw pressure and making the movement smoother under load.
+        """
 
         self.progress.grid()
-        self.progress.start(10)
+        self.progress.start(50)
 
     def _hide_progress(self) -> None:
         """Stop, reset, and hide the progress indicator after a run finishes."""
@@ -486,8 +581,9 @@ class CloudIpResolverApp:
 
         Args:
             text: Complete replacement text.
-            scroll_to_end: When true, reveal the bottom so overall totals and
-                completion information are immediately visible.
+            scroll_to_end: Optional escape hatch for callers that explicitly want
+                the bottom; normal completed runs now remain at the top because
+                the result box is tall enough to show the full summary more often.
         """
 
         self.status_text.configure(state="normal")
