@@ -2,7 +2,7 @@
 
 Cloud IP Resolver matches public IP addresses against published cloud-provider IP ranges and returns the public metadata associated with each match.
 
-The project has been rebuilt from an existing PowerShell proof of concept into a reusable Python engine that powers both a command-line tool and a Tkinter desktop interface. The next delivery milestone is packaging that desktop application as a self-contained Windows executable.
+The project has been rebuilt from an existing PowerShell proof of concept into a reusable Python engine that powers both a command-line tool and a Tkinter desktop interface. Local Windows PyInstaller packaging is now configured; automated builds/releases are the next delivery milestone.
 
 ## Goals
 
@@ -37,7 +37,7 @@ Provider adapters are responsible only for downloading and translating provider-
 
 ## Current status
 
-All three provider adapters have been implemented and validated against the original PowerShell scripts on the real input datasets. The unified multi-provider workflow and first desktop GUI are also implemented.
+All three provider adapters have been implemented and validated against the original PowerShell scripts on the real input datasets. The unified multi-provider workflow and desktop GUI are implemented, and a repeatable local Windows PyInstaller build is configured.
 
 The project currently includes:
 
@@ -52,11 +52,12 @@ The project currently includes:
 - PowerShell-compatible AWS, Azure, and Google Cloud output CSVs
 - parity comparison commands for all three legacy PowerShell outputs
 - one-input/all-provider combined output
-- Tkinter desktop GUI with provider selection, file pickers, non-blocking resolution and result summaries
+- Tkinter desktop GUI with provider selection, file pickers, non-blocking resolution and contextual result summaries
+- local one-file/windowed Windows PyInstaller packaging
 - beginner/analyst-oriented module, class and function documentation throughout source and tests
-- unit and integration-style tests for matching, provider parsing, CSV handling, comparison behaviour, and unified workflows
+- unit and integration-style tests for matching, provider parsing, CSV handling, comparison behaviour, unified workflows and packaging contracts
 
-Standalone Windows packaging, automated Windows builds and versioned releases are the next major milestones.
+Automated Windows builds, versioned releases and code signing are the next major milestones.
 
 ## Development
 
@@ -75,7 +76,23 @@ Launch the development GUI with:
 cloud-ip-resolver-gui
 ```
 
-End users will not be expected to install Python once the Windows executable is introduced.
+End users will not be expected to install Python once they receive the packaged Windows executable.
+
+### Local Windows EXE build
+
+A repeatable PyInstaller build is tracked in the repository. On Windows, with the project virtual environment active, run:
+
+```powershell
+.\scripts\build_windows.ps1
+```
+
+The finished one-file GUI executable is written to:
+
+```text
+dist\CloudIPResolver.exe
+```
+
+See `WINDOWS_BUILD.md` for the build design, validation checklist and troubleshooting context.
 
 ### Reading the code
 
@@ -89,12 +106,13 @@ A useful reading order for someone new to the project is:
 4. `workflow.py` — how several providers are combined for one run.
 5. `io.py` — input validation and CSV output contracts.
 6. `cli.py` — command-line orchestration.
-7. `gui.py` — the Tkinter front end and reusable GUI execution helpers.
+7. `gui.py` and `desktop.py` — reusable Tkinter logic and final analyst-facing presentation.
 8. `tests/` — small examples of expected behaviour and edge cases.
+9. `CloudIPResolver.spec` and `scripts/build_windows.ps1` — Windows packaging.
 
 ## Desktop GUI
 
-The first desktop interface is implemented with Python's standard Tkinter toolkit so it adds no third-party runtime dependency and is suitable for the planned PyInstaller Windows executable. During development, launch it with:
+The desktop interface is implemented with Python's standard Tkinter toolkit so it adds no third-party runtime dependency and is suitable for the PyInstaller Windows executable. During development, launch it with:
 
 ```powershell
 cloud-ip-resolver-gui
@@ -106,14 +124,15 @@ The GUI currently provides:
 - independent AWS, Azure and Google Cloud checkboxes (all selected by default)
 - one combined output using the same namespaced schema as `cloud-ip-resolver all`
 - a background worker thread so provider downloads and matching do not freeze the window
+- elapsed running status plus a progress indicator
 - valid/invalid input counts and examples of invalid rows
 - loaded IPv4/IPv6 prefix counts per provider
-- matched-input and output-match counts per provider
-- overall matched-input/output-row totals and elapsed time
+- contextual `Matched IP rows` and `CIDR matches` terminology
+- provider-level and overall match totals
 - an **Open Output Folder** action after a successful run
 - friendly validation and I/O error dialogs instead of terminal tracebacks
 
-The GUI calls the same `MultiProviderWorkflow` and CSV writer as the CLI rather than reimplementing matching logic. Provider feeds are live in GUI v1; saved-snapshot controls remain available through the CLI for parity and reproducible testing.
+The GUI calls the same `MultiProviderWorkflow` and CSV writer as the CLI rather than reimplementing matching logic. Provider feeds are live in the GUI; saved-snapshot controls remain available through the CLI for parity and reproducible testing.
 
 ## Validated performance
 
