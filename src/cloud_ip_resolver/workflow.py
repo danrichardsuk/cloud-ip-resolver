@@ -50,6 +50,43 @@ class MultiProviderResult:
 
         return sum(len(resolution.matches) for resolution in self.resolutions)
 
+    def matched_input_count_for(self, provider: str) -> int:
+        """Count input rows that matched at least one range from one provider.
+
+        Args:
+            provider: Provider name stored on ``CloudPrefix`` objects, for
+                example ``AWS``, ``Azure`` or ``GCP``.
+
+        Returns:
+            Number of input rows with one or more matches from that provider.
+
+        This differs from :meth:`match_count_for` because one input IP can match
+        several overlapping prefixes from the same provider while still being
+        only one matched input row.
+        """
+
+        return sum(
+            any(match.provider == provider for match in resolution.matches)
+            for resolution in self.resolutions
+        )
+
+    def match_count_for(self, provider: str) -> int:
+        """Count individual output matches belonging to one provider.
+
+        Args:
+            provider: Provider name stored on ``CloudPrefix`` objects.
+
+        Returns:
+            Number of provider matches across all input rows. Overlapping
+            prefixes and duplicate input rows are intentionally counted because
+            each produces a separate output CSV row.
+        """
+
+        return sum(
+            sum(match.provider == provider for match in resolution.matches)
+            for resolution in self.resolutions
+        )
+
 
 class MultiProviderWorkflow:
     """Load multiple provider adapters and resolve one common list of IPs."""
