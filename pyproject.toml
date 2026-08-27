@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cloud-ip-resolver"
-version = "0.6.0"
+version = "0.7.0"
 description = "Resolve public IP addresses against published cloud-provider IP ranges."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,6 +15,7 @@ dependencies = []
 
 [project.scripts]
 cloud-ip-resolver = "cloud_ip_resolver.cli:main"
+cloud-ip-resolver-gui = "cloud_ip_resolver.gui:main"
 
 [project.optional-dependencies]
 dev = [
