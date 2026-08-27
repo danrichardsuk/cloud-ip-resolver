@@ -1,4 +1,12 @@
-"""Command-line interface for Cloud IP Resolver."""
+"""Command-line interface for Cloud IP Resolver.
+
+The CLI is intentionally an orchestration layer rather than the home of the
+matching logic.  It converts command-line arguments into provider/workflow
+objects, prints useful progress information, and delegates parsing, matching and
+CSV writing to reusable modules.  This separation is important because the
+future desktop GUI should call the same underlying code instead of reimplementing
+it.
+"""
 
 from __future__ import annotations
 
@@ -23,6 +31,16 @@ from .workflow import MultiProviderWorkflow
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Create the complete command-line grammar.
+
+    Returns:
+        Configured ``ArgumentParser`` containing provider resolution commands,
+        the unified ``all`` command, and legacy parity-comparison commands.
+
+    Keeping parser construction in its own function makes the CLI easy to test
+    without launching a subprocess.
+    """
+
     parser = argparse.ArgumentParser(
         prog="cloud-ip-resolver",
         description="Resolve public IP addresses against published cloud-provider ranges.",
@@ -67,6 +85,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _add_resolve_arguments(parser: argparse.ArgumentParser, *, default_output: str) -> None:
+    """Add arguments shared by one-provider resolution commands.
+
+    Args:
+        parser: Sub-parser to extend.
+        default_output: Provider-specific filename used when ``-o`` is omitted.
+    """
+
     parser.add_argument("input", type=Path, help="Input CSV containing an IPAddress column")
     parser.add_argument("-o", "--output", type=Path, default=Path(default_output))
     parser.add_argument(
@@ -78,6 +103,13 @@ def _add_resolve_arguments(parser: argparse.ArgumentParser, *, default_output: s
 
 
 def _add_all_resolve_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add arguments specific to the unified all-provider command.
+
+    Each provider gets its own optional snapshot argument because AWS, Azure and
+    GCP publish different files.  A caller can therefore pin any or all sources
+    for a reproducible test while leaving the others live if desired.
+    """
+
     parser.add_argument("input", type=Path, help="Input CSV containing an IPAddress column")
     parser.add_argument(
         "-o",
@@ -105,12 +137,25 @@ def _add_all_resolve_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_compare_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add common old/new CSV arguments to a parity-comparison command."""
+
     parser.add_argument("old", type=Path, help="Legacy PowerShell output CSV")
     parser.add_argument("new", type=Path, help="Python output CSV")
     parser.add_argument("--show", type=int, default=10)
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse a command and dispatch it to the correct workflow.
+
+    Args:
+        argv: Optional argument list. ``None`` means use the real process command
+            line; tests pass an explicit list to exercise the CLI in-process.
+
+    Returns:
+        Process-style exit code: ``0`` success, ``1`` parity difference, ``2``
+        invalid input/configuration or I/O failure.
+    """
+
     args = build_parser().parse_args(argv)
     try:
         if args.command == "aws":
@@ -128,12 +173,25 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "compare-gcp":
             return _run_compare(args, compare_gcp_csv, label="GCP")
     except (OSError, ValueError) as exc:
+        # Present expected user/data errors cleanly instead of a Python traceback.
         print(f"Error: {exc}", file=sys.stderr)
         return 2
     return 2
 
 
 def _read_batch(args: argparse.Namespace):
+    """Read an input CSV and print concise validation diagnostics.
+
+    Args:
+        args: Parsed command arguments containing ``input`` and ``ip_column``.
+
+    Returns:
+        ``InputBatch`` from :func:`read_ip_csv`.
+
+    Only the first five invalid rows are printed so a badly formed large file
+    does not flood the terminal; the total invalid count is still reported.
+    """
+
     print(f"Reading input: {args.input}")
     batch = read_ip_csv(args.input, column=args.ip_column)
     print(f"Valid IP rows: {len(batch.values):,}")
@@ -148,6 +206,8 @@ def _read_batch(args: argparse.Namespace):
 
 
 def _run_aws(args: argparse.Namespace) -> int:
+    """Execute the AWS-only resolution path and write legacy-compatible CSV."""
+
     started = time.perf_counter()
     batch = _read_batch(args)
     provider = AwsProvider(ranges_file=args.ranges_file)
@@ -164,6 +224,8 @@ def _run_aws(args: argparse.Namespace) -> int:
 
 
 def _run_azure(args: argparse.Namespace) -> int:
+    """Execute the Azure-only resolution path and write legacy-compatible CSV."""
+
     started = time.perf_counter()
     batch = _read_batch(args)
     provider = AzureProvider(ranges_file=args.ranges_file)
@@ -185,6 +247,8 @@ def _run_azure(args: argparse.Namespace) -> int:
 
 
 def _run_gcp(args: argparse.Namespace) -> int:
+    """Execute the GCP-only resolution path and write legacy-compatible CSV."""
+
     started = time.perf_counter()
     batch = _read_batch(args)
     provider = GcpProvider(ranges_file=args.ranges_file)
@@ -202,6 +266,16 @@ def _run_gcp(args: argparse.Namespace) -> int:
 
 
 def _run_all(args: argparse.Namespace) -> int:
+    """Resolve one input list against AWS, Azure and GCP in a single workflow.
+
+    Args:
+        args: Parsed ``all`` command options, including optional per-provider
+            snapshot files.
+
+    Returns:
+        ``0`` after writing the combined CSV successfully.
+    """
+
     started = time.perf_counter()
     batch = _read_batch(args)
 
@@ -231,6 +305,19 @@ def _run_all(args: argparse.Namespace) -> int:
 
 
 def _resolve_and_write(started, batch, prefixes, output, writer) -> int:
+    """Shared execution path used by each single-provider command.
+
+    Args:
+        started: ``perf_counter`` value captured before input/provider loading.
+        batch: Validated ``InputBatch``.
+        prefixes: Provider prefix collection.
+        output: Destination CSV path.
+        writer: Provider-specific CSV writer function.
+
+    Returns:
+        ``0`` on success.
+    """
+
     resolver = Resolver(prefixes)
     resolutions = resolver.resolve_many(batch.values)
     matched_inputs = sum(resolution.matched for resolution in resolutions)
@@ -244,6 +331,17 @@ def _resolve_and_write(started, batch, prefixes, output, writer) -> int:
 
 
 def _run_compare(args, comparer, *, label: str) -> int:
+    """Run one provider's legacy-vs-Python parity comparison.
+
+    Args:
+        args: Parsed old/new CSV paths and display limit.
+        comparer: Provider-specific comparison function.
+        label: Human-readable provider name for terminal output.
+
+    Returns:
+        ``0`` for exact parity or ``1`` when differences exist.
+    """
+
     only_old, only_new = comparer(args.old, args.new)
     if not only_old and not only_new:
         print(
@@ -260,6 +358,12 @@ def _run_compare(args, comparer, *, label: str) -> int:
 
 
 def _print_counter(rows, limit: int) -> None:
+    """Print up to ``limit`` example rows from a difference counter.
+
+    The leading ``xN`` shows duplicate multiplicity, which is useful when the
+    same row appeared several times in only one of the compared files.
+    """
+
     for shown, (row, count) in enumerate(rows.items()):
         if shown >= limit:
             break

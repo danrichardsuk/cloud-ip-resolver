@@ -1,3 +1,11 @@
+"""Integration-style tests for the unified multi-provider workflow and CLI.
+
+Unlike provider parser tests, these checks use tiny in-memory stub providers to
+exercise the shared workflow across several providers at once.  They protect
+input order, duplicates, overlapping matches, provider summary counts, the
+combined analyst-facing CSV schema, and the real ``all`` CLI command.
+"""
+
 import csv
 from pathlib import Path
 
@@ -12,15 +20,38 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class StubProvider:
+    """Minimal provider used to test workflows without network/provider parsing.
+
+    The production workflow only requires a ``name`` and ``load_prefixes``
+    method.  This intentionally small stub demonstrates that interface clearly
+    and lets tests choose exact synthetic ranges for each scenario.
+    """
+
     def __init__(self, name, prefixes):
+        """Store a provider display name and deterministic prefix collection."""
+
         self.name = name
         self._prefixes = prefixes
 
     def load_prefixes(self):
+        """Return a new list so callers cannot mutate the stub's stored input."""
+
         return list(self._prefixes)
 
 
 def _synthetic_workflow():
+    """Build a three-provider workflow containing deliberate test edge cases.
+
+    Returns:
+        ``MultiProviderWorkflow`` with:
+        * overlapping AWS/Azure IPv4 ranges;
+        * provider-only IPv4 ranges for Azure and GCP; and
+        * one GCP IPv6 range.
+
+    Keeping this setup in one helper means the workflow/output tests exercise
+    exactly the same synthetic provider landscape.
+    """
+
     return MultiProviderWorkflow(
         [
             StubProvider(
@@ -81,6 +112,12 @@ def _synthetic_workflow():
 
 
 def test_multi_provider_workflow_handles_all_cases() -> None:
+    """Exercise overlap, provider-only, unmatched, duplicate and IPv6 inputs.
+
+    The expected provider tuples also verify most-specific ordering: the first
+    address is inside Azure /25 and AWS /24, so Azure appears first.
+    """
+
     values = [
         "198.51.100.10",
         "198.51.100.200",
@@ -112,6 +149,14 @@ def test_multi_provider_workflow_handles_all_cases() -> None:
 
 
 def test_combined_output_schema_and_order(tmp_path: Path) -> None:
+    """Protect the combined schema, row order and provider-specific namespaces.
+
+    This is the key analyst-facing contract test.  It verifies that Azure values
+    only populate ``Azure_*`` fields, AWS metadata only populates ``AWS_*``, and
+    GCP scope only populates ``GCP_Scope``.  It also confirms unmatched IPs are
+    omitted and duplicate inputs create duplicate output groups.
+    """
+
     values = [
         "198.51.100.10",
         "198.51.100.200",
@@ -142,13 +187,33 @@ def test_combined_output_schema_and_order(tmp_path: Path) -> None:
         ("198.51.100.10", "AWS"),
         ("2001:db8:1::1", "GCP"),
     ]
-    assert rows[0]["Scope"] == "Storage.WestEurope"
-    assert rows[0]["NetworkFeatures"] == "API;NSG"
-    assert rows[1]["NetworkBorderGroup"] == "eu-west-2"
+
+    # Azure row: Azure-specific values are populated, AWS/GCP-specific cells blank.
+    assert rows[0]["Azure_ServiceTagName"] == "Storage.WestEurope"
+    assert rows[0]["Azure_NetworkFeatures"] == "API;NSG"
+    assert rows[0]["AWS_NetworkBorderGroup"] == ""
+    assert rows[0]["GCP_Scope"] == ""
+
+    # AWS row: only the AWS-specific metadata column is populated.
+    assert rows[1]["AWS_NetworkBorderGroup"] == "eu-west-2"
+    assert rows[1]["Azure_ServiceTagName"] == ""
+    assert rows[1]["GCP_Scope"] == ""
+
+    # GCP row: scope is explicitly namespaced rather than sharing an ambiguous column.
+    gcp_row = next(row for row in rows if row["Provider"] == "GCP")
+    assert gcp_row["GCP_Scope"] == "europe-west2"
+    assert gcp_row["Azure_ServiceTagName"] == ""
+
     assert all(row["IPAddress"] != "192.0.2.1" for row in rows)
 
 
 def test_all_cli_uses_saved_provider_snapshots(tmp_path: Path) -> None:
+    """Run the real ``all`` command in-process with all three saved fixtures.
+
+    This exercises parser -> input reader -> provider adapters -> workflow ->
+    combined writer as one end-to-end path, without depending on the network.
+    """
+
     input_path = tmp_path / "input.csv"
     output_path = tmp_path / "combined.csv"
     input_path.write_text(
@@ -186,8 +251,15 @@ def test_all_cli_uses_saved_provider_snapshots(tmp_path: Path) -> None:
     assert {row["Provider"] for row in rows} == {"AWS", "Azure", "GCP"}
     assert all(row["IPAddress"] != "192.0.2.1" for row in rows)
 
+    # Spot-check that the end-to-end command also uses the new namespaced fields.
+    assert any(row["AWS_NetworkBorderGroup"] for row in rows if row["Provider"] == "AWS")
+    assert any(row["Azure_ServiceTagName"] for row in rows if row["Provider"] == "Azure")
+    assert any(row["GCP_Scope"] for row in rows if row["Provider"] == "GCP")
+
 
 def test_cli_keeps_provider_commands_and_adds_all() -> None:
+    """Ensure the unified command is additive and old provider CLI syntax still parses."""
+
     parser = build_parser()
     for command in ("aws", "azure", "gcp"):
         args = parser.parse_args([command, "input.csv"])
@@ -212,6 +284,8 @@ def test_cli_keeps_provider_commands_and_adds_all() -> None:
 
 
 def test_duplicate_providers_are_rejected() -> None:
+    """Reject accidental duplicate provider adapters before they duplicate output."""
+
     provider = StubProvider("AWS", [])
     with pytest.raises(ValueError, match="Duplicate cloud providers"):
         MultiProviderWorkflow([provider, provider])

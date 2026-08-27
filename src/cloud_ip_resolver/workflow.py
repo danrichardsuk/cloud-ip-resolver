@@ -1,4 +1,10 @@
-"""Reusable multi-provider resolution workflow for the CLI and desktop UI."""
+"""Reusable multi-provider workflow for the CLI and future desktop UI.
+
+This layer answers a higher-level question than ``Resolver``: "which provider
+feeds should be loaded for this run?"  It combines their normalised prefixes,
+resolves one shared list of IPs, and returns provider loading statistics.  The
+GUI can therefore reuse the same workflow without duplicating business logic.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +18,12 @@ from .resolver import Resolver
 
 @dataclass(frozen=True, slots=True)
 class ProviderRangeSummary:
-    """Prefix counts loaded from one provider adapter."""
+    """Summarise how many IPv4/IPv6 prefixes one adapter loaded.
+
+    These counts are primarily diagnostic information for the CLI/GUI.  They
+    help a user confirm which source was loaded and roughly how much data was
+    processed without exposing provider-specific feed internals.
+    """
 
     provider: str
     prefix_count: int
@@ -22,24 +33,40 @@ class ProviderRangeSummary:
 
 @dataclass(frozen=True, slots=True)
 class MultiProviderResult:
-    """Resolution output plus provider loading statistics."""
+    """Bundle multi-provider resolutions with feed-loading statistics."""
 
     provider_summaries: tuple[ProviderRangeSummary, ...]
     resolutions: tuple[Resolution, ...]
 
     @property
     def matched_input_count(self) -> int:
+        """Count input rows that matched at least one published cloud range."""
+
         return sum(resolution.matched for resolution in self.resolutions)
 
     @property
     def match_count(self) -> int:
+        """Count output matches, including overlaps and duplicate input rows."""
+
         return sum(len(resolution.matches) for resolution in self.resolutions)
 
 
 class MultiProviderWorkflow:
-    """Load multiple provider adapters and resolve one shared input list."""
+    """Load multiple provider adapters and resolve one common list of IPs."""
 
     def __init__(self, providers: Iterable[ProviderAdapter]) -> None:
+        """Validate and retain the providers that will participate in a run.
+
+        Args:
+            providers: Adapter instances such as ``AwsProvider`` and
+                ``AzureProvider``. A smaller subset is also valid.
+
+        Raises:
+            ValueError: If no providers are supplied or a provider name appears
+                more than once. Duplicate provider names would otherwise create
+                confusing duplicate rows and summaries.
+        """
+
         self.providers = tuple(providers)
         if not self.providers:
             raise ValueError("At least one cloud provider is required")
@@ -52,7 +79,21 @@ class MultiProviderWorkflow:
             )
 
     def resolve_many(self, values: Iterable[str]) -> MultiProviderResult:
-        """Load all configured prefixes once and resolve values in input order."""
+        """Load each feed once, combine its prefixes, and resolve all input rows.
+
+        Args:
+            values: Textual IPv4/IPv6 values to check against every configured
+                provider.
+
+        Returns:
+            ``MultiProviderResult`` containing one resolution per input row plus
+            prefix-count summaries for each provider.
+
+        Notes:
+            Prefixes are deliberately combined before constructing ``Resolver``.
+            That gives us one shared matcher rather than running three separate
+            full passes over the input list.
+        """
 
         prefixes: list[CloudPrefix] = []
         summaries: list[ProviderRangeSummary] = []

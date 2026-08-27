@@ -1,8 +1,17 @@
+"""Tests for GCP parity comparison, including duplicate row multiplicity."""
+
 from cloud_ip_resolver.compare import compare_gcp_csv
 from cloud_ip_resolver.io import GCP_OUTPUT_FIELDS
 
 
 def test_compare_gcp_ignores_order_and_preserves_duplicates(tmp_path) -> None:
+    """Treat reordered duplicate GCP rows as equal while still counting duplicates.
+
+    ``row2`` appears twice in each file but at different positions.  A set would
+    lose that multiplicity; the production ``Counter`` comparison deliberately
+    retains it and should still report exact parity here.
+    """
+
     header = ",".join(GCP_OUTPUT_FIELDS) + "\n"
     row1 = "34.80.10.20,34.80.0.0/16,Google Cloud,asia-east1-special\n"
     row2 = "34.80.10.20,34.80.0.0/15,Google Cloud,asia-east1\n"

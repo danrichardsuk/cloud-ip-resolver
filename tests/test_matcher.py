@@ -1,7 +1,11 @@
+"""Unit tests for the shared prefix matcher and its bucket optimisation."""
+
 from cloud_ip_resolver import CloudPrefix, PrefixMatcher
 
 
 def test_ipv4_returns_all_overlapping_matches_most_specific_first() -> None:
+    """Return nested IPv4 ranges with the narrower CIDR first."""
+
     matcher = PrefixMatcher(
         [
             CloudPrefix.from_cidr(provider="Example", cidr="10.0.0.0/8", service="broad"),
@@ -15,6 +19,12 @@ def test_ipv4_returns_all_overlapping_matches_most_specific_first() -> None:
 
 
 def test_ipv4_very_broad_prefix_still_matches_across_bucket_boundary() -> None:
+    """Ensure a /7 stored in the broad list can match a different first octet.
+
+    ``10.0.0.0/7`` covers both addresses starting with 10 and 11, so assigning
+    it only to the '10' first-octet bucket would be incorrect.
+    """
+
     matcher = PrefixMatcher(
         [CloudPrefix.from_cidr(provider="Example", cidr="10.0.0.0/7")]
     )
@@ -23,6 +33,8 @@ def test_ipv4_very_broad_prefix_still_matches_across_bucket_boundary() -> None:
 
 
 def test_ipv6_non_byte_aligned_prefix_matches_correctly() -> None:
+    """Confirm ``ipaddress`` honours all 35 prefix bits, not just whole bytes."""
+
     matcher = PrefixMatcher(
         [CloudPrefix.from_cidr(provider="Example", cidr="2600:1900::/35")]
     )

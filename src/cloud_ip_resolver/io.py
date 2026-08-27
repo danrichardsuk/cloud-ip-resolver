@@ -1,4 +1,15 @@
-"""CSV input/output helpers used by the CLI and future desktop UI."""
+"""CSV input and output helpers shared by the CLI and future desktop GUI.
+
+This module has two responsibilities:
+1. validate/normalise input IP rows without stopping the whole batch on one bad
+   value; and
+2. translate provider-independent ``Resolution`` objects back into the exact
+   CSV shapes users expect.
+
+The three provider-specific schemas intentionally remain compatible with the
+legacy PowerShell outputs.  The combined schema is newer and uses provider-
+namespaced columns wherever a concept exists for only one provider.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +21,8 @@ from pathlib import Path
 
 from .models import Resolution
 
+# Legacy-compatible provider schemas. Do not casually rename these: parity
+# commands compare them directly with the historical PowerShell files.
 AWS_OUTPUT_FIELDS = (
     "IPAddress",
     "Prefix",
@@ -31,20 +44,27 @@ GCP_OUTPUT_FIELDS = (
     "Service",
     "Scope",
 )
+
+# Common concepts stay short. Provider-only concepts are explicitly namespaced
+# so an analyst does not infer that, for example, Azure Service Tag Name and GCP
+# Scope are the same business concept.
 COMBINED_OUTPUT_FIELDS = (
     "IPAddress",
     "Provider",
     "Prefix",
     "Service",
     "Region",
-    "Scope",
-    "NetworkBorderGroup",
-    "NetworkFeatures",
+    "AWS_NetworkBorderGroup",
+    "Azure_ServiceTagName",
+    "Azure_NetworkFeatures",
+    "GCP_Scope",
 )
 
 
 @dataclass(frozen=True, slots=True)
 class InvalidInput:
+    """Describe one input row that could not be interpreted as an IP address."""
+
     row_number: int
     value: str
     reason: str
@@ -52,16 +72,38 @@ class InvalidInput:
 
 @dataclass(frozen=True, slots=True)
 class InputBatch:
+    """Hold valid IP strings separately from invalid-row diagnostics."""
+
     values: tuple[str, ...]
     invalid: tuple[InvalidInput, ...]
 
 
 def read_ip_csv(path: str | Path, *, column: str = "IPAddress") -> InputBatch:
-    """Read canonical IPv4/IPv6 values from a CSV column."""
+    """Read and validate one IP-address column from a CSV file.
+
+    Args:
+        path: Input CSV path.
+        column: Header containing the IP values. Defaults to ``IPAddress`` for
+            compatibility with the legacy files.
+
+    Returns:
+        ``InputBatch`` containing valid values in original order plus a separate
+        list of invalid rows and reasons.
+
+    Raises:
+        OSError: If the file cannot be opened.
+        ValueError: If the requested column does not exist.
+
+    Invalid rows are reported rather than raising immediately.  That lets a
+    large analyst-supplied file complete even when a small number of rows need
+    cleaning afterwards.
+    """
 
     values: list[str] = []
     invalid: list[InvalidInput] = []
 
+    # utf-8-sig transparently accepts CSVs with or without a UTF-8 BOM, which is
+    # common when files have passed through Excel or Windows tooling.
     with Path(path).open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         if reader.fieldnames is None or column not in reader.fieldnames:
@@ -70,6 +112,7 @@ def read_ip_csv(path: str | Path, *, column: str = "IPAddress") -> InputBatch:
                 f"Input CSV must contain a '{column}' column; found: {available}"
             )
 
+        # CSV row 1 is the header, so data rows begin at human-friendly row 2.
         for row_number, row in enumerate(reader, start=2):
             value = (row.get(column) or "").strip()
             if not value:
@@ -91,7 +134,11 @@ def write_aws_matches_csv(
     path: str | Path,
     resolutions: Iterable[Resolution],
 ) -> int:
-    """Write AWS matches using the legacy PowerShell v3 columns."""
+    """Write AWS matches in the five-column legacy PowerShell format.
+
+    Returns:
+        Number of match rows written (header excluded).
+    """
 
     return _write_matches_csv(
         path,
@@ -112,7 +159,11 @@ def write_azure_matches_csv(
     path: str | Path,
     resolutions: Iterable[Resolution],
 ) -> int:
-    """Write Azure matches using the legacy PowerShell v3 columns."""
+    """Write Azure matches in the six-column legacy PowerShell format.
+
+    Returns:
+        Number of match rows written (header excluded).
+    """
 
     return _write_matches_csv(
         path,
@@ -134,7 +185,11 @@ def write_gcp_matches_csv(
     path: str | Path,
     resolutions: Iterable[Resolution],
 ) -> int:
-    """Write GCP matches using the legacy PowerShell v3 columns."""
+    """Write Google Cloud matches in the four-column legacy format.
+
+    Returns:
+        Number of match rows written (header excluded).
+    """
 
     return _write_matches_csv(
         path,
@@ -154,10 +209,19 @@ def write_combined_matches_csv(
     path: str | Path,
     resolutions: Iterable[Resolution],
 ) -> int:
-    """Write every provider match using the unified multi-provider schema.
+    """Write matches from all providers using the combined analyst-friendly schema.
 
-    Unmatched input addresses are intentionally omitted, matching the existing
-    provider-specific output behaviour.
+    Args:
+        path: Destination CSV path.
+        resolutions: Ordered resolution records from the multi-provider workflow.
+
+    Returns:
+        Number of match rows written (header excluded).
+
+    Notes:
+        Unmatched inputs are omitted, matching the provider-specific behaviour.
+        Provider-only values are populated only for their own provider; the
+        corresponding cells remain blank on other providers' rows.
     """
 
     output_path = Path(path)
@@ -169,6 +233,10 @@ def write_combined_matches_csv(
         writer.writeheader()
         for resolution in resolutions:
             for match in resolution.matches:
+                is_aws = match.provider == "AWS"
+                is_azure = match.provider == "Azure"
+                is_gcp = match.provider == "GCP"
+
                 writer.writerow(
                     {
                         "IPAddress": str(resolution.ip),
@@ -177,13 +245,22 @@ def write_combined_matches_csv(
                         or str(match.network),
                         "Service": match.service or "",
                         "Region": match.region or "",
-                        "Scope": match.scope or "",
-                        "NetworkBorderGroup": match.metadata.get(
-                            "network_border_group"
-                        )
-                        or "",
-                        "NetworkFeatures": match.metadata.get("network_features")
-                        or "",
+                        "AWS_NetworkBorderGroup": (
+                            match.metadata.get("network_border_group") or ""
+                            if is_aws
+                            else ""
+                        ),
+                        "Azure_ServiceTagName": (
+                            match.metadata.get("name") or match.scope or ""
+                            if is_azure
+                            else ""
+                        ),
+                        "Azure_NetworkFeatures": (
+                            match.metadata.get("network_features") or ""
+                            if is_azure
+                            else ""
+                        ),
+                        "GCP_Scope": match.scope or "" if is_gcp else "",
                     }
                 )
                 row_count += 1
@@ -199,6 +276,22 @@ def _write_matches_csv(
     provider,
     row_factory,
 ) -> int:
+    """Shared implementation for the three legacy-compatible CSV writers.
+
+    Args:
+        path: Destination CSV path.
+        fields: Ordered output field names.
+        resolutions: Resolution records that may contain several providers.
+        provider: Provider name whose matches should be written.
+        row_factory: Callable translating one match into a CSV dictionary.
+
+    Returns:
+        Number of data rows written.
+
+    Keeping the file-opening/iteration code here prevents small behavioural
+    differences from developing between the AWS, Azure and GCP writers.
+    """
+
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     row_count = 0

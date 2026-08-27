@@ -52,6 +52,7 @@ The project currently includes:
 - PowerShell-compatible AWS, Azure, and Google Cloud output CSVs
 - parity comparison commands for all three legacy PowerShell outputs
 - one-input/all-provider combined output
+- beginner/analyst-oriented module, class and function documentation throughout source and tests
 - unit and integration-style tests for matching, provider parsing, CSV handling, comparison behaviour, and unified workflows
 
 The desktop GUI and Windows packaging are the next major milestones.
@@ -68,6 +69,20 @@ pytest
 ```
 
 End users will not be expected to install Python once the Windows executable is introduced.
+
+### Reading the code
+
+Every Python source and test module starts with a high-level explanation of its role. Classes and functions use docstrings that explain their purpose, inputs, outputs, important exceptions and non-obvious design choices. Inline comments are reserved for logic where the implementation itself is not immediately obvious, such as CIDR bucketing and provider-specific metadata mapping.
+
+A useful reading order for someone new to the project is:
+
+1. `models.py` — the common data structures.
+2. `providers/` — how AWS, Azure and GCP publications become common prefixes.
+3. `matcher.py` and `resolver.py` — how an IP is matched to those prefixes.
+4. `workflow.py` — how several providers are combined for one run.
+5. `io.py` — input validation and CSV output contracts.
+6. `cli.py` — command-line orchestration.
+7. `tests/` — small examples of expected behaviour and edge cases.
 
 ## Validated performance
 
@@ -172,10 +187,14 @@ cloud-ip-resolver all input.csv -o output_all.csv `
 The combined output schema is:
 
 ```text
-IPAddress,Provider,Prefix,Service,Region,Scope,NetworkBorderGroup,NetworkFeatures
+IPAddress,Provider,Prefix,Service,Region,AWS_NetworkBorderGroup,Azure_ServiceTagName,Azure_NetworkFeatures,GCP_Scope
 ```
 
-Provider-specific fields are left blank when they do not apply. Azure Service Tag names and Google Cloud scopes are represented in `Scope`.
+The first five columns are concepts that can apply across providers. Provider-specific concepts are namespaced with the provider name and an underscore so their meaning is explicit to analysts and downstream tools:
+
+- `AWS_NetworkBorderGroup` is populated only for AWS rows.
+- `Azure_ServiceTagName` and `Azure_NetworkFeatures` are populated only for Azure rows.
+- `GCP_Scope` is populated only for Google Cloud rows.
 
 Combined output preserves the original input order and duplicate input rows. If an IP matches multiple published prefixes, the most-specific CIDR is written first, consistent with the shared resolver. Unmatched input addresses are omitted, matching the existing provider-specific output behaviour.
 

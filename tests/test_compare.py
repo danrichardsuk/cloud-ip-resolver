@@ -1,3 +1,5 @@
+"""Focused tests for duplicate-aware legacy parity comparison helpers."""
+
 from pathlib import Path
 
 from cloud_ip_resolver.compare import compare_aws_csv
@@ -6,6 +8,12 @@ HEADER = "IPAddress,Prefix,Region,Service,NetworkBorderGroup\n"
 
 
 def test_compare_aws_csv_ignores_row_order(tmp_path: Path) -> None:
+    """Confirm AWS comparison checks row content/multiplicity rather than ordering.
+
+    The two temporary files contain identical rows in opposite orders.  Both
+    returned difference counters should therefore be empty.
+    """
+
     old = tmp_path / "old.csv"
     new = tmp_path / "new.csv"
     row1 = "198.51.100.10,198.51.100.0/25,us-east-1,EC2,us-east-1\n"

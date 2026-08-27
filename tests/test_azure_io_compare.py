@@ -1,3 +1,10 @@
+"""Tests for Azure legacy CSV writing and parity comparison.
+
+These checks protect the contract with existing analyst output files: the Python
+rewrite may be faster internally, but its Azure-specific CSV must retain the
+same columns and comparison must not fail solely because rows were reordered.
+"""
+
 import csv
 
 from cloud_ip_resolver.compare import compare_azure_csv
@@ -7,6 +14,8 @@ from cloud_ip_resolver.resolver import Resolver
 
 
 def test_write_azure_matches_uses_legacy_columns(tmp_path) -> None:
+    """Map a normalised Azure prefix back to the exact historical CSV schema."""
+
     prefix = CloudPrefix.from_cidr(
         provider="Azure",
         cidr="20.1.0.0/16",
@@ -41,6 +50,8 @@ def test_write_azure_matches_uses_legacy_columns(tmp_path) -> None:
 
 
 def test_compare_azure_ignores_order(tmp_path) -> None:
+    """Treat the same Azure rows in a different order as exact parity."""
+
     header = ",".join(AZURE_OUTPUT_FIELDS) + "\n"
     row1 = "20.1.2.3,Storage.WestEurope,20.1.0.0/16,westeurope,Storage,API;NSG\n"
     row2 = "20.1.2.3,AzureCloud.westeurope,20.0.0.0/8,westeurope,,\n"

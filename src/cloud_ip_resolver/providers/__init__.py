@@ -1,4 +1,9 @@
-"""Cloud-provider range sources."""
+"""Convenient exports for all supported cloud-provider adapters.
+
+Importing from ``cloud_ip_resolver.providers`` gives callers one place to find
+the concrete AWS, Azure and GCP adapters as well as their public feed URLs and
+the shared ``ProviderAdapter`` interface.
+"""
 
 from .aws import AWS_IP_RANGES_URL, AwsFeed, AwsProvider
 from .azure import AZURE_SERVICE_TAGS_PAGE_URL, AzureFeed, AzureProvider
