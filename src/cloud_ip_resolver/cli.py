@@ -27,7 +27,7 @@ from .providers.aws import AwsProvider
 from .providers.azure import AzureProvider
 from .providers.gcp import GcpProvider
 from .resolver import Resolver
-from .workflow import MultiProviderWorkflow
+from .workflow import MultiProviderResult, MultiProviderWorkflow
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -295,6 +295,8 @@ def _run_all(args: argparse.Namespace) -> int:
             f"(IPv4: {summary.ipv4_count:,}; IPv6: {summary.ipv6_count:,})"
         )
 
+    _print_provider_match_summary(result)
+
     rows = write_combined_matches_csv(args.output, result.resolutions)
     elapsed = time.perf_counter() - started
     print(f"Matched input rows: {result.matched_input_count:,}")
@@ -302,6 +304,27 @@ def _run_all(args: argparse.Namespace) -> int:
     print(f"Output: {args.output}")
     print(f"Completed in {elapsed:.2f} seconds")
     return 0
+
+
+def _print_provider_match_summary(result: MultiProviderResult) -> None:
+    """Print per-provider input and output match counts for a combined run.
+
+    Args:
+        result: Completed multi-provider result.
+
+    The two numbers are intentionally shown side by side. ``matched input rows``
+    counts an input row once for that provider, whereas ``output match rows``
+    includes every overlapping provider prefix that will appear in the CSV.
+    """
+
+    print("Provider matches:")
+    for summary in result.provider_summaries:
+        provider = summary.provider
+        print(
+            f"  {provider}: matched input rows "
+            f"{result.matched_input_count_for(provider):,}; "
+            f"output match rows {result.match_count_for(provider):,}"
+        )
 
 
 def _resolve_and_write(started, batch, prefixes, output, writer) -> int:
