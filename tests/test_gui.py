@@ -1,9 +1,8 @@
 """Headless tests for the desktop GUI's reusable execution helpers.
 
-These tests deliberately avoid constructing a Tk window.  They exercise the
-parts that matter to correctness—request validation, provider selection,
-combined output generation and result formatting—using small deterministic
-provider stubs instead of live network feeds.
+These tests deliberately avoid constructing a Tk window. They exercise request
+validation, provider selection, combined output generation, summary formatting,
+and small pieces of UI state behaviour using deterministic stubs.
 """
 
 import csv
@@ -12,8 +11,11 @@ from pathlib import Path
 import pytest
 
 from cloud_ip_resolver.gui import (
+    CloudIpResolverApp,
     GuiRunRequest,
+    SUMMARY_SEPARATOR,
     default_output_path,
+    format_completion_status,
     format_run_summary,
     normalise_provider_names,
     run_resolution,
@@ -152,7 +154,7 @@ def test_run_resolution_supports_provider_subset_and_writes_combined_csv(tmp_pat
 
 
 def test_format_run_summary_explains_provider_and_overall_counts(tmp_path: Path) -> None:
-    """Present the key analyst-facing counts without requiring them to inspect the CSV."""
+    """Present key analyst-facing counts in clearly separated sections."""
 
     source = tmp_path / "input.csv"
     output = tmp_path / "combined.csv"
@@ -169,6 +171,11 @@ def test_format_run_summary_explains_provider_and_overall_counts(tmp_path: Path)
 
     summary = format_run_summary(result)
 
+    assert "INPUT SUMMARY" in summary
+    assert "PROVIDER RANGES" in summary
+    assert "PROVIDER MATCHES" in summary
+    assert "OVERALL RESULTS" in summary
+    assert summary.count(SUMMARY_SEPARATOR) == 4
     assert "Valid input rows: 2" in summary
     assert "Invalid/skipped rows: 1" in summary
     assert "AWS: 2 prefixes (IPv4 2; IPv6 0)" in summary
@@ -177,3 +184,94 @@ def test_format_run_summary_explains_provider_and_overall_counts(tmp_path: Path)
     assert "Matched input rows: 2" in summary
     assert "Output match rows: 3" in summary
     assert "Completed in 0.50 seconds" in summary
+
+
+def test_completion_status_is_short_and_explicit(tmp_path: Path) -> None:
+    """Show an immediate success signal beside the GUI action buttons."""
+
+    source = tmp_path / "input.csv"
+    output = tmp_path / "combined.csv"
+    source.write_text("IPAddress\n198.51.100.10\n", encoding="utf-8")
+    ticks = iter((5.0, 6.75))
+    result = run_resolution(
+        GuiRunRequest(source, output, ("AWS",)),
+        provider_builders=_builders(),
+        clock=lambda: next(ticks),
+    )
+
+    assert format_completion_status(result) == "Completed successfully in 1.75 seconds"
+
+
+class _FakeTextWidget:
+    """Minimal text-widget stand-in for viewport behaviour tests."""
+
+    def __init__(self) -> None:
+        self.seen = None
+        self.value = ""
+
+    def configure(self, **_kwargs) -> None:
+        """Accept state changes made by the production helper."""
+
+    def delete(self, *_args) -> None:
+        """Clear the fake text contents."""
+
+        self.value = ""
+
+    def insert(self, _index, text) -> None:
+        """Record inserted text."""
+
+        self.value = text
+
+    def see(self, index) -> None:
+        """Record which part of the text widget should become visible."""
+
+        self.seen = index
+
+
+def test_status_box_can_auto_scroll_to_overall_totals() -> None:
+    """Successful runs should reveal the bottom summary rather than the first line."""
+
+    app = CloudIpResolverApp.__new__(CloudIpResolverApp)
+    app.status_text = _FakeTextWidget()
+
+    app._set_status("line one\nline two", scroll_to_end=True)
+
+    assert app.status_text.value == "line one\nline two"
+    assert app.status_text.seen == "end"
+
+
+class _FakeProgressbar:
+    """Minimal progress-bar stand-in for the idle reset behaviour."""
+
+    def __init__(self) -> None:
+        self.stopped = False
+        self.removed = False
+        self.value = None
+
+    def stop(self) -> None:
+        """Record animation stop."""
+
+        self.stopped = True
+
+    def configure(self, **kwargs) -> None:
+        """Capture the reset value supplied by the GUI."""
+
+        self.value = kwargs.get("value")
+
+    def grid_remove(self) -> None:
+        """Record that the progress bar was hidden."""
+
+        self.removed = True
+
+
+def test_progress_bar_is_reset_and_hidden_after_run() -> None:
+    """Completed/error runs should not leave a partial green progress indicator."""
+
+    app = CloudIpResolverApp.__new__(CloudIpResolverApp)
+    app.progress = _FakeProgressbar()
+
+    app._hide_progress()
+
+    assert app.progress.stopped
+    assert app.progress.value == 0
+    assert app.progress.removed
