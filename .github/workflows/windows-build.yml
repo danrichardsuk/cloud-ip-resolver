@@ -1,0 +1,105 @@
+name: Windows build and release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# Release creation needs write access to repository contents. The same workflow
+# also runs for ordinary main-branch builds, where this permission is unused.
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    name: Test and build Windows EXE
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Test and build CloudIPResolver.exe
+        shell: pwsh
+        run: .\scripts\build_windows.ps1
+
+      - name: Verify release tag matches application version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          $PackageVersion = python -c "import cloud_ip_resolver; print(cloud_ip_resolver.__version__)"
+          $TagVersion = $env:TAG_NAME.TrimStart("v")
+
+          if ($PackageVersion -ne $TagVersion) {
+              throw "Release tag $env:TAG_NAME does not match application version $PackageVersion."
+          }
+
+          Write-Host "Release version verified: $PackageVersion"
+
+      - name: Create SHA-256 checksum
+        shell: pwsh
+        run: |
+          $ExePath = "dist\CloudIPResolver.exe"
+          $ChecksumPath = "dist\CloudIPResolver.exe.sha256"
+          $Hash = (Get-FileHash -Algorithm SHA256 $ExePath).Hash.ToLowerInvariant()
+          "$Hash  CloudIPResolver.exe" | Set-Content -Encoding ascii $ChecksumPath
+          Write-Host "SHA-256: $Hash"
+
+      - name: Upload Windows build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CloudIPResolver-windows-${{ github.run_number }}
+          path: |
+            dist/CloudIPResolver.exe
+            dist/CloudIPResolver.exe.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          $Repository = $env:GITHUB_REPOSITORY
+          $Title = "Cloud IP Resolver $env:TAG_NAME"
+          $ExePath = "dist\CloudIPResolver.exe"
+          $ChecksumPath = "dist\CloudIPResolver.exe.sha256"
+
+          # If the release already exists (for example after re-running a failed
+          # workflow), replace its assets. Otherwise create it from the pushed tag.
+          gh release view $env:TAG_NAME --repo $Repository *> $null
+          if ($LASTEXITCODE -eq 0) {
+              Write-Host "Release already exists; replacing its build assets."
+              gh release upload $env:TAG_NAME $ExePath $ChecksumPath `
+                  --repo $Repository --clobber
+          }
+          else {
+              Write-Host "Creating GitHub Release $env:TAG_NAME."
+              gh release create $env:TAG_NAME $ExePath $ChecksumPath `
+                  --repo $Repository `
+                  --verify-tag `
+                  --generate-notes `
+                  --title $Title
+          }
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "GitHub Release publication failed."
+          }
